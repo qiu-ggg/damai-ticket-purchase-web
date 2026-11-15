@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情（日历式选日期：场次只显示当前选中那天）</title>
+<!--
+  假页面：详情页的「日历格」形态（2026-10-10 客户截图实测）。
+
+  这种页面和 detail_filter.html 的区别是致命的：
+
+    「日期」是一个月历格子，「场次」列表**只渲染当前选中那天的场次**。
+    进场时默认选中 26 号 → 场次区里只有「2026.12.26 …」的两场，
+    根本不存在 27 号的场次文本 —— 所以：
+      · 方法1（sku-times-card 里挑）匹配不到 27 号；
+      · 方法2（全文搜「2026.12.27 / 12月27日」）也永远搜不到。
+    唯一的正路是**先点日历里的「27」，等场次刷新出来再选场次**。
+
+  同时保留「没日历格」的回归面：日历相关的判定全部以
+  「页面上有『2026年12月』这种月份标签」为前提 ——
+  detail_filter.html 那种页面没有月份标签，必须原样走老路。
+
+  另外摆了两个陷阱：
+    · 别的月份的格子（2026-11-30、2027-01-01/02/03）是置灰的
+      （class 带 disabled）—— 配置若是别的月份，一个都不许点；
+    · 场次数据只配到 12-29 —— 点了 30/31 号格子也刷不出场次，
+      必须「点了没反应 → 如实 False」，绝不能顺手点别的。
+-->
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  h4 { margin: 18px 0 6px; font-size: 13px; color: #666; }
+  .cal { display: inline-block; border: 1px solid #eee; padding: 10px 14px; }
+  .cal-title { font-size: 14px; font-weight: bold; margin-bottom: 6px; }
+  .cal table { border-collapse: collapse; }
+  .cal td { width: 44px; height: 36px; text-align: center; cursor: pointer; }
+  .cal td i.cap { display: block; font-size: 9px; font-style: normal; color: #999; }
+  .cal td.disabled { color: #ccc; cursor: default; }
+  .cal td.picked { border: 1px solid #ff2d51; color: #ff2d51; }
+  .sku-times-card .bui-dm-sku-card-item {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .sku-tickets-card .item-content {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .picked { background: #ffe8ec; border-color: #ff2d51 !important; }
+  .soldout { color: #999; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h4>日期</h4>
+  <div class="cal" id="cal">
+    <div class="cal-title" id="calTitle">2026年12月</div>
+    <table>
+      <tr><td class="disabled">30</td><td class="cell" data-day="2026-12-01">1</td><td class="cell" data-day="2026-12-02">2</td><td class="cell" data-day="2026-12-03">3</td><td class="cell" data-day="2026-12-04">4</td><td class="cell" data-day="2026-12-05">5</td><td class="cell" data-day="2026-12-06">6</td></tr>
+      <tr><td class="cell" data-day="2026-12-07">7</td><td class="cell" data-day="2026-12-08">8</td><td class="cell" data-day="2026-12-09">9</td><td class="cell" data-day="2026-12-10">10</td><td class="cell" data-day="2026-12-11">11</td><td class="cell" data-day="2026-12-12">12</td><td class="cell" data-day="2026-12-13">13</td></tr>
+      <tr><td class="cell" data-day="2026-12-14">14</td><td class="cell" data-day="2026-12-15">15</td><td class="cell" data-day="2026-12-16">16</td><td class="cell" data-day="2026-12-17">17</td><td class="cell" data-day="2026-12-18">18</td><td class="cell" data-day="2026-12-19">19</td><td class="cell" data-day="2026-12-20">20</td></tr>
+      <tr><td class="cell" data-day="2026-12-21">21</td><td class="cell" data-day="2026-12-22">22</td><td class="cell" data-day="2026-12-23">23</td><td class="cell" data-day="2026-12-24">24<i class="cap">平安夜</i></td><td class="cell" data-day="2026-12-25">25<i class="cap">圣诞节</i></td><td class="cell picked" data-day="2026-12-26">26</td><td class="cell" data-day="2026-12-27">27</td></tr>
+      <tr><td class="cell" data-day="2026-12-28">28</td><td class="cell" data-day="2026-12-29">29</td><td class="cell" data-day="2026-12-30">30</td><td class="cell" data-day="2026-12-31">31</td><td class="disabled">1</td><td class="disabled">2</td><td class="disabled">3</td></tr>
+    </table>
+  </div>
+
+  <h4>场次（只显示选中那天的）</h4>
+  <div class="sku-times-card" id="timesList"></div>
+
+  <h4>票价</h4>
+  <div class="sku-tickets-card" id="ticketsList">
+    <div class="item-content soldout" data-price="80">80.0元<i>缺货登记</i></div>
+    <div class="item-content picked" data-price="280">280.0元</div>
+  </div>
+
+  <div class="buy__button__text" id="buyBtn">选座购买</div>
+<script>
+  // 月份行的渲染变体（?cal=verbose / noyear）—— 真站的月份行经常带着
+  // 左右箭头一起渲染，或者干脆不带年份；识别必须都扛得住。
+  (function () {
+    var mode = new URLSearchParams(location.search).get('cal') || '';
+    var t = document.getElementById('calTitle');
+    if (mode === 'verbose') t.textContent = '‹ 2026年12月 ›';
+    else if (mode === 'noyear') t.textContent = '12月';
+  })();
+
+  var SESS = {
+    '2026-12-26': ['2026.12.26 14:00 上本', '2026.12.26 19:30 下本'],
+    '2026-12-27': ['2026.12.27 14:00 上本', '2026.12.27 19:30 下本'],
+    '2026-12-28': ['2026.12.28 14:00 上本'],
+    '2026-12-29': ['2026.12.29 19:30 下本']
+  };
+
+  // 进场时默认选中 26 号（真实页面也是这样）
+  window.__day = '2026-12-26';
+  window.__picked = {date: '2026-12-26', session: null, price: '280'};
+  window.__clickCount = {day: 0, date: 0, price: 0};
+  window.__buyClicked = 0;
+
+  function renderSessions(day) {
+    var box = document.getElementById('timesList');
+    box.innerHTML = '';
+    var list = SESS[day] || [];           // ★ 没数据的日期就是空白，什么都不渲染
+    for (var i = 0; i < list.length; i++) {
+      (function (text) {
+        var el = document.createElement('div');
+        el.className = 'bui-dm-sku-card-item';
+        el.setAttribute('data-date', day);
+        el.textContent = text;
+        el.addEventListener('click', function () {
+          window.__picked.date = day;
+          window.__picked.session = text;
+          window.__clickCount.date += 1;
+          var all = box.querySelectorAll('.bui-dm-sku-card-item');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('picked');
+          el.classList.add('picked');
+        });
+        box.appendChild(el);
+      })(list[i]);
+    }
+  }
+
+  // 日历格子：可点的（class 不带 disabled）点了换场次并重渲染
+  var cells = document.querySelectorAll('.cal td.cell');
+  for (var i = 0; i < cells.length; i++) {
+    (function (el) {
+      el.addEventListener('click', function () {
+        if (el.classList.contains('disabled')) return;
+        window.__clickCount.day += 1;
+        window.__day = el.getAttribute('data-day');
+        for (var j = 0; j < cells.length; j++) cells[j].classList.remove('picked');
+        el.classList.add('picked');
+        renderSessions(window.__day);
+      });
+    })(cells[i]);
+  }
+
+  renderSessions(window.__day);           // ★ 进场时只有 26 号的场次在 DOM 里
+
+  var prices = document.querySelectorAll('#ticketsList .item-content');
+  for (var k = 0; k < prices.length; k++) {
+    (function (el) {
+      el.addEventListener('click', function () {
+        window.__picked.price = el.getAttribute('data-price');
+        window.__clickCount.price += 1;
+        for (var j = 0; j < prices.length; j++) prices[j].classList.remove('picked');
+        el.classList.add('picked');
+      });
+    })(prices[k]);
+  }
+
+  document.getElementById('buyBtn').onclick = function () {
+    window.__buyClicked += 1;
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录 - 大麦网</title>
+<style>
+  body { font-family: sans-serif; margin: 30px; }
+  .footer { margin-top: 24px; color: #888; font-size: 13px; }
+  iframe { border: 0; width: 460px; height: 340px; }
+</style>
+</head>
+<body>
+  <!--
+    本地假页面：复刻**真实大麦登录页的结构陷阱**。
+
+    2026-10 实测（tools/probe_login_page.py）：
+      主文档里 <input> 数量 = 0，真正的登录表单整个在
+      https://ipassport.damai.cn/mini_login.htm 这个跨域 iframe 里。
+      所以 fm-login-id 这些选择器再准，不切 iframe 也一个都命中不了；
+      表现就是日志里那句「没认出账号输入框，请手动登录」。
+
+    这个夹具就是拿这个结构来锁死回归：主文档故意一个 input 都没有。
+  -->
+  <h2>大麦登录</h2>
+  <div>（主文档里故意一个 input 都没有 —— 复刻真实站点：表单整个在跨域 iframe 里）</div>
+
+  <iframe id="loginFrame" src="login_inner.html" title="登录"></iframe>
+
+  <div class="footer">帮助中心 · 公司介绍 · 协议及隐私权政策</div>
+</body>
+</html>

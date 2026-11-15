@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情（日历式 + 场次/票档异步重渲染）</title>
+<!--
+  假页面：**异步重渲染**的日历式详情页（2026-10-10 客户现场日志实测）。
+
+  和 detail_calendar.html 的区别只有一件事 —— **时序**：
+
+    真站上，点日历格子之后场次列表是「先清空、再按新日期拉回来」的。
+    客户日志里一行行「✓ 已点日历里的 27 号，12 月的场次刷出来了」，
+    可场次和票档**一个都没选上** —— 老代码看见「页面上有 12.27 字样」
+    就以为列表回来了，其实那一瞬列表还是空的。这里如实做出来：
+
+      · 点日历格 → 立刻 innerHTML = '' → 450ms 后才把新那天的场次填进去；
+      · 与此同时「当前日期」标题**立刻**变成「2026.12.27 周日」——
+        老代码正是被它骗过去的（判据成了过程，不是结果）；
+      · 选中场次 → 票档列表同样先清空、250ms 后再填
+        （票档是跟着场次走的，也各有各的时序）。
+
+    ?nodate=1 → 场次文案**不带日期**（只写「19:30 下本」）：
+    日历页上另一种真实形态 —— 那一天已经由日历选中了，列表就不重复写日期。
+
+  另外留着老陷阱：别的月份置灰格子不许点、没场次的日期必须如实失败、
+  点过的那一天不要重复点（重点一次会把列表重置，永远卡在竞态里）。
+-->
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  h4 { margin: 18px 0 6px; font-size: 13px; color: #666; }
+  .cal { display: inline-block; border: 1px solid #eee; padding: 10px 14px; }
+  .cal-title { font-size: 14px; font-weight: bold; margin-bottom: 6px; }
+  .cal table { border-collapse: collapse; }
+  .cal td { width: 44px; height: 36px; text-align: center; cursor: pointer; }
+  .cal td i.cap { display: block; font-size: 9px; font-style: normal; color: #999; }
+  .cal td.disabled { color: #ccc; cursor: default; }
+  .cal td.picked { border: 1px solid #ff2d51; color: #ff2d51; }
+  .sku-times-card .bui-dm-sku-card-item {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .sku-tickets-card .item-content {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .picked { background: #ffe8ec; border-color: #ff2d51 !important; }
+  .soldout { color: #999; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h4>日期</h4>
+  <div class="cal" id="cal">
+    <div class="cal-title" id="calTitle">2026年12月</div>
+    <table>
+      <tr><td class="disabled">30</td><td class="cell" data-day="2026-12-01">1</td><td class="cell" data-day="2026-12-02">2</td><td class="cell" data-day="2026-12-03">3</td><td class="cell" data-day="2026-12-04">4</td><td class="cell" data-day="2026-12-05">5</td><td class="cell" data-day="2026-12-06">6</td></tr>
+      <tr><td class="cell" data-day="2026-12-07">7</td><td class="cell" data-day="2026-12-08">8</td><td class="cell" data-day="2026-12-09">9</td><td class="cell" data-day="2026-12-10">10</td><td class="cell" data-day="2026-12-11">11</td><td class="cell" data-day="2026-12-12">12</td><td class="cell" data-day="2026-12-13">13</td></tr>
+      <tr><td class="cell" data-day="2026-12-14">14</td><td class="cell" data-day="2026-12-15">15</td><td class="cell" data-day="2026-12-16">16</td><td class="cell" data-day="2026-12-17">17</td><td class="cell" data-day="2026-12-18">18</td><td class="cell" data-day="2026-12-19">19</td><td class="cell" data-day="2026-12-20">20</td></tr>
+      <tr><td class="cell" data-day="2026-12-21">21</td><td class="cell" data-day="2026-12-22">22</td><td class="cell" data-day="2026-12-23">23</td><td class="cell" data-day="2026-12-24">24<i class="cap">平安夜</i></td><td class="cell" data-day="2026-12-25">25<i class="cap">圣诞节</i></td><td class="cell picked" data-day="2026-12-26">26</td><td class="cell" data-day="2026-12-27">27</td></tr>
+      <tr><td class="cell" data-day="2026-12-28">28</td><td class="cell" data-day="2026-12-29">29</td><td class="cell" data-day="2026-12-30">30</td><td class="cell" data-day="2026-12-31">31</td><td class="disabled">1</td><td class="disabled">2</td><td class="disabled">3</td></tr>
+    </table>
+  </div>
+
+  <!-- ★ 当前日期标题：点完格子**立刻**就变 —— 老代码就是被它骗的 -->
+  <h4 id="selDate">2026.12.26 周六 · 场次</h4>
+  <!-- ★ 场次列表的「日期标题」：全文搜日期时最容易撞上的就是它 ——
+       点它不会选中任何场次，却会被当成「点到了场次」 -->
+  <h4 id="dayTitle">12月26日 周六</h4>
+  <div class="sku-times-card" id="timesList"></div>
+
+  <h4>票价</h4>
+  <div class="sku-tickets-card" id="ticketsList"></div>
+
+  <div class="buy__button__text" id="buyBtn">选座购买</div>
+<script>
+  var NODATE = new URLSearchParams(location.search).get('nodate') === '1';
+
+  var SESS = {
+    '2026-12-26': ['14:00 上本', '19:30 下本'],
+    '2026-12-27': ['14:00 上本', '19:30 下本'],
+    '2026-12-28': ['14:00 上本'],
+    '2026-12-29': ['19:30 下本']
+  };
+  var PRICES = [
+    {p: '80',  t: '80元（缺货登记）', sold: true},
+    {p: '280', t: '280元',            sold: false}
+  ];
+
+  var STAGE_DELAY = 450;                 // 场次：点完日历后多久才回来
+  var PRICE_DELAY = 250;                 // 票档：选中场次后多久才回来
+
+  window.__day = '2026-12-26';
+  window.__picked = {date: null, session: null, price: null};
+  window.__clickCount = {day: 0, session: 0, price: 0, title: 0};
+  window.__buyClicked = 0;
+  window.__render = {sessions: 0, prices: 0};
+
+  var WD = {'2026-12-26': '周六', '2026-12-27': '周日', '2026-12-28': '周一',
+            '2026-12-29': '周二'};
+
+  function shortDay(day) {
+    var a = day.split('-');
+    return parseInt(a[1], 10) + '月' + parseInt(a[2], 10) + '日';
+  }
+
+  // 两个标题被点了就记一笔 —— 用来证明「没去点标题冒充选场次」
+  document.getElementById('dayTitle').addEventListener('click', function () {
+    window.__clickCount.title += 1;
+  });
+  document.getElementById('selDate').addEventListener('click', function () {
+    window.__clickCount.title += 1;
+  });
+
+  function syncTitles(day) {
+    document.getElementById('selDate').textContent =
+      day.replace(/-/g, '.') + ' ' + (WD[day] || '') + ' · 场次';
+    document.getElementById('dayTitle').textContent =
+      shortDay(day) + ' ' + (WD[day] || '');
+  }
+
+  function sessText(day, i) {
+    return NODATE ? SESS[day][i] : day.replace(/-/g, '.') + ' ' + SESS[day][i];
+  }
+
+  function renderSessions(day) {
+    var box = document.getElementById('timesList');
+    box.innerHTML = '';
+    var list = SESS[day] || [];          // ★ 没数据的日期就是空白，什么都不渲染
+    for (var i = 0; i < list.length; i++) {
+      (function (text) {
+        var el = document.createElement('div');
+        el.className = 'bui-dm-sku-card-item';
+        el.setAttribute('data-date', day);
+        el.textContent = text;
+        el.addEventListener('click', function () {
+          window.__picked.date = day;
+          window.__picked.session = text;
+          window.__clickCount.session += 1;
+          var all = box.querySelectorAll('.bui-dm-sku-card-item');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('picked');
+          el.classList.add('picked');
+          renderPrices();                // 票档跟着场次走
+        });
+        box.appendChild(el);
+      })(sessText(day, i));
+    }
+    window.__render.sessions += 1;
+  }
+
+  function renderPrices() {
+    var box = document.getElementById('ticketsList');
+    box.innerHTML = '';
+    setTimeout(function () {             // ★ 先清空，再异步填回来
+      for (var i = 0; i < PRICES.length; i++) {
+        (function (item) {
+          var el = document.createElement('div');
+          el.className = 'item-content' + (item.sold ? ' soldout' : '');
+          el.setAttribute('data-price', item.p);
+          el.textContent = item.t;
+          el.addEventListener('click', function () {
+            window.__picked.price = item.p;
+            window.__clickCount.price += 1;
+            var all = box.querySelectorAll('.item-content');
+            for (var j = 0; j < all.length; j++) all[j].classList.remove('picked');
+            el.classList.add('picked');
+          });
+          box.appendChild(el);
+        })(PRICES[i]);
+      }
+      window.__render.prices += 1;
+    }, PRICE_DELAY);
+  }
+
+  // 日历格子：可点的（class 不带 disabled）点了换场次
+  var cells = document.querySelectorAll('.cal td.cell');
+  for (var i = 0; i < cells.length; i++) {
+    (function (el) {
+      el.addEventListener('click', function () {
+        if (el.classList.contains('disabled')) return;
+        window.__clickCount.day += 1;
+        window.__day = el.getAttribute('data-day');
+        for (var j = 0; j < cells.length; j++) cells[j].classList.remove('picked');
+        el.classList.add('picked');
+        // ① 两个标题立刻变（这就是老代码看到的「日期字样」）
+        syncTitles(window.__day);
+        // ② 列表先清空，异步再回来 —— 和真站一样
+        var box = document.getElementById('timesList');
+        box.innerHTML = '';
+        setTimeout(function () { renderSessions(window.__day); }, STAGE_DELAY);
+      });
+    })(cells[i]);
+  }
+
+  renderSessions(window.__day);           // 进场时只有 26 号的场次在 DOM 里
+  renderPrices();
+  syncTitles(window.__day);
+
+  document.getElementById('buyBtn').onclick = function () { window.__buyClicked += 1; };
+</script>
+</body>
+</html>

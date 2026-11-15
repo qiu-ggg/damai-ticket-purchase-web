@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>确认购买</title>
+<!--
+  假页面：新版大麦 H5 订单确认页（m.damai.cn/shows/order-pay.html）
+
+  这个文件的类名**不是猜的**，是从 show-h5-next 的真实 chunk 里抄出来的
+  （2026-10-06 从 https://g.alicdn.com/alipay-movie-client/show-h5-next/.../769.*.js 提取）。
+
+  真实组件结构（React + CSS Modules，前缀 bui-ultron / bui-）：
+
+    <div class="bui-ultron-viewer-header">
+      <div class="bui-ultron-viewer-header_title">
+        <div class="bui-ultron-viewer-header_title-text">选择观演人</div>
+        <div class="bui-ultron-viewer-header_title-tip">最多可选 N 人</div>
+      </div>
+      <div><button class="...bui-ultron-viewer-header_extra">新增观演人</button></div>
+    </div>
+    <div class="bui-ultron-viewer-list">
+      <div class="bui-ultron-viewer-item" onclick=toggle>      ← 整行可点，toggle isUsed
+        <div>
+          <div class="[bui-ultron-viewer-item-disable]">
+            <div class="bui-ultron-viewer-info">
+              <div class="bui-ultron-viewer-info-name">姓名</div>
+            </div>
+            <div class="bui-ultron-viewer-id">
+              <div class="bui-ultron-viewer-typedesc">身份证</div>
+              <div class="bui-ultron-viewer-number">110***********1234</div>
+            </div>
+          </div>
+          <div>【disableReason 的提示行，自己带 stopPropagation】</div>
+        </div>
+        <BuiCheckbox checked={isUsed}/>                        ← div.bui-checkbox + input.bui-checkbox-input
+      </div>
+    </div>
+    <div class="dmprotocol-box">…协议勾选（BuiCheckbox）…</div>
+    <div class="fixed-block"><div class="bui-ultron-buy-submit">
+      <div class="bui-ultron-buy-submit-price"><span class="price-num">￥380</span></div>
+      <button class="bui-btn bui-btn-contained bui-btn-full bui-btn-primary pay-submit-btn">提交订单</button>
+    </div></div>
+
+  注意：上面这块注释里**不能再出现 HTML 注释符号** —— 嵌一层会提前把外层注释关掉，
+  剩下的文字就变成页面正文了（真踩过：导致 _is_payment_page() 误判成已到支付环节）。
+
+  几个必须复刻的行为契约（漏掉就把 bug 测没了）：
+   1. 点【整行】才 toggle；复选框只是显示态（和真实 React 一致）
+   2. 已选满（selectedNum == buyerTotalNum）再点别人 → toast「所需观演人已选齐」，不改状态
+   3. 协议没勾 → 提交被拦下并 toast，**不会**提交
+   4. 观演人没选齐 → 提交被拦下并 toast
+   5. 提交成功 → window.__submitted = true、标题变「收银台」、页面出现成功提示
+
+  query 参数：
+   ?max=2        可选 2 个观演人（默认 1）
+   ?viewers=10   生成 10 行观演人，且**目标观演人排最后一行**
+                 ← 复刻真站事故：列表有 10 行时，要勾的那个人在页面下方，
+                   必须先滚动。而 Selenium 的 el.rect 是**文档坐标**，
+                   滚动后拿它当视口坐标发点击，那一下会落到视口外面 ——
+                   不报错、也没反应，观演人永远勾不上 → 0/1 → 提交订单
+                   被大麦拒绝。用户看到的就是「这个还是不能提交订单」。
+   ?tall=1       在列表上方塞 900px 空白（等价于「要滚下去才点得到」）
+   ?noprotocol=1 不显示协议勾选（测「页面没有协议框时不能卡住」）
+   ?slow=800     提交后 800ms 才改状态（测等待逻辑）
+   ?render=2500  观演人列表 2500ms 后才渲染出来
+                 ← 复刻「列表是接口异步拉的」。真踩过：脚本 1 秒就去数行数，
+                   读到 0 行 → 判成「页面上没有这个人」→ 观演人一个都没勾上、
+                   订单也没提交，而且不报错。
+   ?skin=alt     把所有类名换成另一套（dmv2-*）
+                 ← 复刻「大麦前端发版换了 CSS Modules 的名字」。写死类名的
+                   选择器会全部失效，只剩「按文本找名字」那条兜底能救回来。
+   ?busy=N       前 N 次点【提交订单】都被拦下并 toast「当前排队人数过多，请稍后再试」，
+                 第 N+1 次才真的提交
+                 ← 复刻开票瞬间的服务端排队：真站这时会返回 F-10012 / 排队提示，
+                   观演人和协议都是好的，只是服务端不收。脚本必须能**识别这是
+                   可重试的**并尽快重提，而不是傻等或当成致命错误停手。
+                   注意夹具故意**不**改任何状态：再点一次就是一次干净的提交。
+   ?busyword=xx  自定义上面那条提示的文案（测关键词识别面）
+   ?busyhard=1   拥挤提示改成「请选择 1 位观演人」这种不可重试的 ——
+                 用来钉住「不可重试的错误绝不能被当成拥挤猛点」
+   ?jump=xx      点【提交订单】时不提交，直接跳到 xx 那个地址
+                 ← 复刻「大麦把提交拦掉、同时把地址也换了」。被拦时它甩过来的
+                   是正文写着「访问异常」的提示页，而脚本原来那一步是
+                   「地址变了 = 页面已跳转 = 订单已提交」—— 于是一次「被拦」
+                   被报成「抢到了」。这一条必须由正文来定性，不能只看地址。
+                   配合 fixtures/risk.html 用（`?jump=risk.html`）。
+-->
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f4f5f6; color: #030b1a; padding-bottom: 80px;
+  }
+  .bui-ultron-viewer-header {
+    align-items: center; background: #fff; display: flex;
+    justify-content: space-between; padding: 9px 22px;
+  }
+  .bui-ultron-viewer-header_title { flex: 1; font-size: 12px; }
+  .bui-ultron-viewer-header_title-text { font-size: 15px; font-weight: 500; }
+  .bui-ultron-viewer-header_title-tip { color: #ff5000; margin-top: 3px; }
+  .bui-ultron-viewer-list { background: #fff; padding: 9px 21px 18px; }
+  /* 真实 CSS：display:flex; justify-content:space-between */
+  .bui-ultron-viewer-item {
+    align-items: center; display: flex; flex-direction: row;
+    justify-content: space-between; cursor: pointer; padding: 6px 0;
+  }
+  .bui-ultron-viewer-item-disable { opacity: .5; }
+  .bui-ultron-viewer-info { align-items: center; display: flex; flex-direction: row; }
+  .bui-ultron-viewer-info-name {
+    color: #000; font-size: 16px; margin-right: 4px;
+    max-width: 225px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .bui-ultron-viewer-id { align-items: center; display: flex; flex-direction: row; margin-top: 3px; }
+  .bui-ultron-viewer-typedesc { color: #69717c; font-size: 12px; margin-right: 9px; }
+  .bui-ultron-viewer-number { color: #69717c; font-size: 12px; }
+  .bui-ultron-viewer-tips { color: #ff5000; display: flex; font-size: 12px; align-items: center; }
+  .bui-checkbox { display: inline-flex; align-items: center; }
+  .bui-checkbox-input { width: 18px; height: 18px; margin: 0; }
+  .bui-checkbox-icon { display: none; }
+  .bui-checkbox-label { font-size: 12px; color: #69717c; }
+  .bui-ultron-buy-submit-price .price-num { color: #030b1a; font-size: 21px; font-weight: 700; }
+  .dmprotocol-box {
+    display: flex; align-items: center; gap: 6px;
+    padding: 12px 14px; font-size: 12px; color: #69717c;
+  }
+  .dmprotocol-item-a { color: #229af0; text-decoration: none; }
+  .fixed-block { position: fixed; left: 0; right: 0; bottom: 0; }
+  .bui-ultron-buy-submit {
+    align-items: center; background: #fff; border-top: 1px solid #dcdfe6;
+    display: flex; justify-content: center; padding: 9px 12px; gap: 12px;
+  }
+  .bui-ultron-buy-submit-price { flex: 1; }
+  .pay-submit-btn {
+    align-items: center; display: flex; font-size: 18px; height: 44px;
+    justify-content: center; width: 140px; border: none; border-radius: 8px;
+    background: linear-gradient(90deg, #ff8500, #ff5000); color: #fff;
+    font-family: inherit; cursor: pointer;
+  }
+  .bui-btn-disabled { opacity: .5; cursor: not-allowed; }
+  #toast, .bui-toast {
+    position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%);
+    background: rgba(0,0,0,.8); color: #fff; padding: 10px 16px; border-radius: 6px;
+    font-size: 14px; display: none; z-index: 99;
+  }
+  #cashier { padding: 40px; font-size: 20px; }
+  .bui-ultron--order-part-line { height: 10px; }
+  /* ?skin=alt 用的一套「换过名」的类名，样式等价、名字全不一样 */
+  .dmv2-row {
+    align-items: center; display: flex; flex-direction: row;
+    justify-content: space-between; cursor: pointer; padding: 6px 0;
+  }
+  .dmv2-name { color: #000; font-size: 16px; margin-right: 4px; }
+  .dmv2-typedesc { color: #69717c; font-size: 12px; margin-right: 9px; }
+  .dmv2-number { color: #69717c; font-size: 12px; }
+  .dmv2-tips { color: #ff5000; display: flex; font-size: 12px; align-items: center; }
+  .dmv2-check { width: 18px; height: 18px; margin: 0; }
+</style>
+</head>
+<body data-spm="orderconfirm">
+<div id="root">
+  <div class="bui-ultron--order-part-line"></div>
+  <div id="tallTop"></div>
+
+  <div class="bui-ultron-viewer-header">
+    <div class="bui-ultron-viewer-header_title">
+      <div class="bui-ultron-viewer-header_title-text">选择观演人</div>
+      <div class="bui-ultron-viewer-header_title-tip" id="maxTip"></div>
+    </div>
+    <div>
+      <button type="button" class="bui-btn bui-btn-outlined bui-btn-small bui-ultron-viewer-header_extra">新增观演人</button>
+    </div>
+  </div>
+
+  <div class="bui-ultron-viewer-list" id="viewerList"></div>
+
+  <div class="dmprotocol-box" id="protocolBox">
+    <div class="bui-checkbox bui-checkbox-label-right">
+      <input type="checkbox" class="bui-checkbox-input" id="protocolInput">
+      <div class="bui-checkbox-icon"></div>
+    </div>
+    <div class="bui-checkbox-label">我已阅读并同意</div>
+    <a class="dmprotocol-item-a" href="javascript:void(0)">《购票须知》</a>
+  </div>
+
+  <div class="fixed-block">
+    <div class="bui-ultron-buy-submit">
+      <div class="bui-ultron-buy-submit-price"><span class="price-num">￥380</span></div>
+      <button type="button"
+              class="bui-btn bui-btn-contained bui-btn-full bui-btn-primary pay-submit-btn"
+              id="paySubmitBtn">提交订单</button>
+    </div>
+  </div>
+</div>
+<div class="bui-toast" id="toast"></div>
+
+<script>
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var buyerTotalNum = parseInt(qs.get('max') || '1', 10);
+  var slow = parseInt(qs.get('slow') || '0', 10);
+  var renderDelay = parseInt(qs.get('render') || '0', 10);
+  // 排队/拥挤：前 busyCount 次提交被拦下。busyHard 让提示换成「不可重试」那条，
+  // 用来钉住「不能把该停手的错误当成拥挤猛点」。
+  var busyCount = parseInt(qs.get('busy') || '0', 10);
+  var busyWord = qs.get('busyword') || '当前排队人数过多，请稍后再试';
+  var busyHard = qs.get('busyhard') === '1';
+  // 提交后跳到别处，不真的提交（测「地址变了 ≠ 提交成功」）
+  var jumpTo = qs.get('jump') || '';
+
+  // ?skin=alt：整套类名换成另一套（模拟大麦前端发版改名）。
+  // 只有「行 / 姓名 / 证件 / 不可用提示 / 复选框」这几个真会被脚本读的换掉，
+  // 协议框和提交按钮保持原名 —— 现实里它们来自别的组件，改动节奏不同。
+  var alt = qs.get('skin') === 'alt';
+  var CLS = alt ? {
+    row: 'dmv2-row', name: 'dmv2-name', typedesc: 'dmv2-typedesc',
+    number: 'dmv2-number', tips: 'dmv2-tips', check: 'dmv2-check'
+  } : {
+    row: 'bui-ultron-viewer-item', name: 'bui-ultron-viewer-info-name',
+    typedesc: 'bui-ultron-viewer-typedesc', number: 'bui-ultron-viewer-number',
+    tips: 'bui-ultron-viewer-tips', check: 'bui-checkbox-input'
+  };
+
+  // 真实接口里的 viewerList：viewerName / idTypeDesc / hashIdentityNo
+  // isUsed 是「有没有被勾上」，isDisabled 是「这个人这次不能买」
+  var viewerList = [
+    {viewerId: 1, viewerName: '王小明', idTypeDesc: '身份证', hashIdentityNo: '110***********1234', isUsed: false, isDisabled: false},
+    {viewerId: 2, viewerName: '李小红',   idTypeDesc: '身份证', hashIdentityNo: '310***********5678', isUsed: false, isDisabled: false},
+    {viewerId: 3, viewerName: '张三',     idTypeDesc: '护照',   hashIdentityNo: 'E1********1',      isUsed: false, isDisabled: true,
+     disableReason: '该证件类型本场不支持', sceneType: 1}
+  ];
+
+  // ?viewers=N：把列表撑长，并把**目标观演人挪到最后一行**。
+  // 这一条是专门为「坐标用错坐标系」那个 bug 造的：目标在页面下方时，
+  // 必须先滚动才能点到它，用文档坐标发点击就会落到视口外面。
+  var viewers = parseInt(qs.get('viewers') || '0', 10);
+  if (viewers > 3) {
+    var target = viewerList[0];                       // 王小明 = 脚本要勾的人
+    var tail = viewerList.slice(1);                   // 李小红、张三（不可用）
+    var filler = [], n = 0;
+    while (tail.length + filler.length < viewers - 1) {
+      n += 1;
+      filler.push({viewerId: 100 + n, viewerName: '演员甲' + n, idTypeDesc: '身份证',
+                   hashIdentityNo: '440***********' + (1000 + n), isUsed: false,
+                   isDisabled: false});
+    }
+    viewerList = filler.concat(tail, [target]);       // 目标排最后 → 要滚下去
+  }
+
+  window.__viewerList = viewerList;
+  window.__targetName = '王小明';
+  window.__selectedCount = function () {
+    return viewerList.filter(function (v) { return v.isUsed; }).length;
+  };
+
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.style.display = 'none'; }, 1800);
+    window.__lastToast = msg;
+  }
+
+  // ---- 渲染（和真实 JSX 一一对应）----
+  function sync() {
+    viewerList.forEach(function (v) {
+      var row = document.querySelector('.' + CLS.row + '[data-vid="' + v.viewerId + '"]');
+      if (!row) return;
+      var input = row.querySelector('.' + CLS.check);
+      if (input) input.checked = !!v.isUsed;
+    });
+    document.getElementById('maxTip').textContent = '最多可选 ' + buyerTotalNum + ' 人';
+  }
+
+  function render() {
+    var list = document.getElementById('viewerList');
+    list.innerHTML = '';
+    viewerList.forEach(function (v, idx) {
+      var row = document.createElement('div');
+      row.className = CLS.row;
+      row.setAttribute('data-vid', String(v.viewerId));
+      if (idx !== viewerList.length - 1) row.style.marginBottom = '15px';
+
+      var left = document.createElement('div');
+      var inner = document.createElement('div');
+      // 真实代码：isDisabled && !disableReason 时才加 -disable
+      inner.className = (v.isDisabled && !v.disableReason) ? 'bui-ultron-viewer-item-disable' : '';
+
+      var info = document.createElement('div');
+      info.className = 'bui-ultron-viewer-info';
+      var name = document.createElement('div');
+      name.className = CLS.name;
+      name.textContent = v.viewerName;
+      info.appendChild(name);
+
+      var idBox = document.createElement('div');
+      idBox.className = 'bui-ultron-viewer-id';
+      var td = document.createElement('div');
+      td.className = CLS.typedesc;
+      td.textContent = v.idTypeDesc;
+      var num = document.createElement('div');
+      num.className = CLS.number;
+      num.textContent = v.hashIdentityNo;
+      idBox.appendChild(td);
+      idBox.appendChild(num);
+
+      inner.appendChild(info);
+      inner.appendChild(idBox);
+      left.appendChild(inner);
+
+      var tail = document.createElement('div');
+      if (v.disableReason) {
+        var tips = document.createElement('div');
+        tips.className = CLS.tips;
+        tips.textContent = v.disableReason;
+        // 真实代码在这里 stopPropagation
+        tips.addEventListener('click', function (ev) { ev.stopPropagation(); });
+        tail.appendChild(tips);
+      }
+      left.appendChild(tail);
+      row.appendChild(left);
+
+      var cb = document.createElement('div');
+      cb.className = 'bui-checkbox bui-checkbox-label-right';
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = CLS.check;
+      input.checked = !!v.isUsed;
+      var icon = document.createElement('div');
+      icon.className = 'bui-checkbox-icon';
+      cb.appendChild(input);
+      cb.appendChild(icon);
+      row.appendChild(cb);
+
+      // onClick 挂在【整行】上 —— 和真实实现一致，子元素的点击冒泡上来
+      row.addEventListener('click', function () { toggle(v); });
+      list.appendChild(row);
+    });
+    sync();
+  }
+
+  // 和真实 N(e,i) 一一对应
+  //
+  // ★ 注意每一条分支都要 sync()。复选框是 React **受控**组件：只要状态没变，
+  //   重新渲染就会把 DOM 上的 checked 强行掰回去。少了这一步，夹具就会撒一个
+  //   真实页面不会撒的谎 —— 直接点 <input> 会让浏览器原生把 checked 翻成 true，
+  //   而 App 层拒绝了这次选择，于是「读 checked 判断成没成」读到的就是假的。
+  //   （真踩过：S16「选满之后再点别人会被拒」因此误判成点成功。）
+  function toggle(v) {
+    if (v.isDisabled) { toast('该观演人本场不可用'); sync(); return; }
+    var selectedNum = window.__selectedCount();
+    if (v.isUsed) {
+      v.isUsed = false;
+    } else {
+      if (selectedNum >= buyerTotalNum) {   // 真实代码：所需观演人已选齐
+        toast('所需观演人已选齐');
+        sync();
+        return;
+      }
+      v.isUsed = true;
+    }
+    sync();
+    window.__toggleCount = (window.__toggleCount || 0) + 1;
+  }
+
+  // ---- 提交 ----
+  function selectedNames() {
+    return viewerList.filter(function (v) { return v.isUsed; })
+                     .map(function (v) { return v.viewerName; });
+  }
+
+  document.getElementById('paySubmitBtn').addEventListener('click', function () {
+    window.__submitClicks = (window.__submitClicks || 0) + 1;
+    window.__submitTimes = window.__submitTimes || [];
+    window.__submitTimes.push(Date.now());
+
+    var proto = document.getElementById('protocolInput');
+    if (proto && !proto.checked) {
+      toast('请先阅读并同意购票须知');
+      return;
+    }
+    if (window.__selectedCount() !== buyerTotalNum) {
+      toast('请选择 ' + buyerTotalNum + ' 位观演人');
+      return;
+    }
+    // ★ 排队/拥挤：服务端不收，但**不是**脚本的错，重提就能过。
+    //   夹具刻意不动任何状态 —— 关掉这个条件再点一次就是一次干净的提交。
+    if (window.__submitClicks <= busyCount) {
+      toast(busyHard ? '请选择 ' + buyerTotalNum + ' 位观演人'
+                     : busyWord);
+      return;
+    }
+    // 被拦掉、但地址一起换了：正文才是判据，地址不是。
+    if (jumpTo) { location.href = jumpTo; return; }
+    window.__submittedNames = selectedNames();
+    function done() {
+      window.__submitted = true;
+      document.title = '收银台';
+      var c = document.createElement('div');
+      c.id = 'cashier';
+      c.textContent = '订单提交成功，请在 15 分钟内完成支付';
+      document.body.appendChild(c);
+    }
+    if (slow > 0) { setTimeout(done, slow); } else { done(); }
+  });
+
+  if (qs.get('noprotocol') === '1') {
+    // 真·没有协议框：直接从 DOM 里拿掉，而不是只隐藏 ——
+    // 这场演出本来就不需要勾协议，判断逻辑得能区分这两种情况
+    document.getElementById('protocolBox').remove();
+  }
+
+  // ?tall=N：在观演人列表**上面**塞 N 像素内容（场次/票档/座位/优惠券那堆）。
+  // 作用只有一个：把要勾的那一行挤到首屏之外，逼出「必须先滚动才能点到」。
+  // 真站的订单页上面本来就有这些内容，这里只是把它显式化、好让测试稳定重现。
+  var tall = parseInt(qs.get('tall') || '0', 10);
+  if (tall > 0) {
+    document.getElementById('tallTop').style.height = tall + 'px';
+    document.getElementById('tallTop').style.background = '#eceff3';
+  }
+
+  if (renderDelay > 0) {
+    // 复刻「观演人列表是接口异步拉的」：这段时间页面上一行观演人都没有。
+    // 脚本如果不等就来看，会数出 0 行，然后把整单放弃。
+    window.__viewerRendered = false;
+    setTimeout(function () {
+      render();
+      window.__viewerRendered = true;
+    }, renderDelay);
+  } else {
+    render();
+    window.__viewerRendered = true;
+  }
+})();
+</script>
+</body>
+</html>

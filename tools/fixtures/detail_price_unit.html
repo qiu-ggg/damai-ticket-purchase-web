@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情（带单位票价：80.0元 / 280.0元 / 1080.0元）</title>
+<!--
+  假页面：带单位票价的「选错档」现场（2026-10-11 客户实测）。
+
+  客户配置里写的是「80.0元」这种带单位的写法。老的 `_option_text_match`
+  只对纯数字才按「独立的数」比，带单位就退回字面子串，于是
+  `'80.0元' in '280.0元'` 是 True、`'80.0元' in '1080.0元'` 也是 True ——
+  于是「80.0元」撞上了 280.0元 / 1080.0元 那一档，点的不是客户要的那档。
+
+  页面把「默认选中」明明白白摆出来（.picked + __picked 初值），
+  这样「脚本到底有没有改掉默认选择」一眼可辨。
+
+  query 参数：
+   ?no80=1   不渲染 80.0元 那一档（只剩 280.0元 / 1080.0元）
+-->
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+  .sku-tickets-card .item-content {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .picked { background: #ffe8ec; border-color: #ff2d51 !important; }
+  h4 { margin: 18px 0 6px; font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+  <h4>票价</h4>
+  <div class="sku-tickets-card" id="ticketsList">
+    <div class="item-content" data-price="80.0">80.0元</div>
+    <div class="item-content" data-price="280.0">280.0元</div>
+    <div class="item-content picked" data-price="1080.0">1080.0元</div>
+  </div>
+
+  <div class="buy__button__text" id="buyBtn">选座购买</div>
+<script>
+  // 页面**默认选中**的那一份（真实详情页也是带着默认选择进场的）
+  window.__picked = {price: '1080.0'};
+  window.__clickCount = {price: 0};
+  window.__buyClicked = 0;
+
+  // ?no80=1 → 不渲染 80.0元 那一档
+  if (/[?&]no80=1/.test(location.search)) {
+    var t80 = document.querySelector('#ticketsList [data-price="80.0"]');
+    if (t80) t80.parentNode.removeChild(t80);
+  }
+
+  (function () {
+    var box = document.getElementById('ticketsList');
+    var items = box.querySelectorAll('[data-price]');
+    for (var i = 0; i < items.length; i++) {
+      (function (el) {
+        el.addEventListener('click', function () {
+          window.__picked.price = el.getAttribute('data-price');
+          window.__clickCount.price += 1;
+          for (var j = 0; j < items.length; j++) {
+            items[j].classList.remove('picked');
+          }
+          el.classList.add('picked');
+        });
+      })(items[i]);
+    }
+  })();
+
+  document.getElementById('buyBtn').onclick = function () {
+    window.__buyClicked += 1;
+    location.href = 'seat.html';
+  };
+</script>
+</body>
+</html>

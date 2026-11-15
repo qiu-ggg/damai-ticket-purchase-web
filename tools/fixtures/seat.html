@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>选座购买</title>
+<style>
+  body { margin: 0; font-family: sans-serif; }
+  #seatmap { position: absolute; left: 60px; top: 80px; width: 800px; height: 500px; background: #f4f4f4; }
+  .seat-item { position: absolute; width: 20px; height: 20px; background: #99ccff; cursor: pointer; }
+  .seat-item.disabled { background: #dddddd; cursor: not-allowed; }
+  #confirmBtn { position: absolute; left: 60px; top: 620px; width: 160px; height: 44px; font-size: 16px; }
+</style>
+</head>
+<body>
+  <div id="seatmap"></div>
+  <button id="confirmBtn" class="confirm-btn" disabled>确认选座</button>
+<script>
+  window.__picked = null;
+  // ?autotitle=1 → 1.5 秒后自动改标题，模拟"用户自己手动点完座位、页面跳走了"，
+  // 让 choice_seat 的循环能自然退出（不跳转，好让测试还能读页面上的变量）
+  var q = location.search || '';
+
+  var map = document.getElementById('seatmap');
+  for (var r = 0; r < 8; r++) {
+    for (var c = 0; c < 20; c++) {
+      var d = document.createElement('div');
+      d.className = 'seat-item' + (r === 3 ? ' disabled' : '');
+      d.style.left = (20 + c * 34) + 'px';
+      d.style.top = (20 + r * 44) + 'px';
+      d.dataset.seatId = r + '-' + c;
+      if (r !== 3) {
+        d.onclick = (function (el) {
+          return function () { window.__picked = el.dataset.seatId; };
+        })(d);
+      }
+      map.appendChild(d);
+    }
+  }
+
+  var btn = document.getElementById('confirmBtn');
+  // 真实页面里确认按钮是选中座位后才可点，这里用轮询复刻同样的约束
+  setInterval(function () { btn.disabled = !window.__picked; }, 30);
+  window.__confirmed = false;
+  btn.onclick = function () {
+    window.__confirmed = true;
+    // ?stay=1 → 不跳转，就地改标题；方便测试在同一个页面上读变量
+    if (q.indexOf('stay') >= 0) { document.title = '订单确认页'; }
+    else { location.href = 'order2.html'; }
+  };
+
+  // ?autotitle=1 → 1.5 秒后自动改标题，模拟"用户自己手动点完座位、页面跳走了"，
+  // 让 choice_seat 的循环能自然退出
+  if (q.indexOf('autotitle') >= 0) {
+    setTimeout(function () { document.title = '订单确认页'; }, 1500);
+  }
+</script>
+</body>
+</html>

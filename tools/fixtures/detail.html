@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情</title>
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  .tab { display: inline-block; padding: 8px 16px; border: 1px solid #ccc; cursor: pointer; margin-right: 8px; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+
+  /* ---- 城市 / 场次 / 票价：和真站同名的 class，脚本按它们找 ---- */
+  .bui-dm-tour .tour-card {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .sku-times-card .bui-dm-sku-card-item {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .sku-tickets-card .item-content {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .picked { background: #ffe8ec; border-color: #ff2d51 !important; }
+  .soldout { color: #999; }
+  h4 { margin: 18px 0 6px; font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+  <!-- ===================================================================
+       详情页夹具。两类用途：
+
+       ① 购买按钮 / 扫码浮层 / 不选座 那几条（S1–S15 用的）
+       ② ★ 城市 / 场次 / 票价的**选择**（S34 用的）
+
+       为什么要有 ②：`_find_and_click_element` 和 `_select_option_by_config`
+       原来是「每个候选元素单独读一次 el.text」—— 3 个场次 × 若干选项
+       就是十几次往返。改成一次读完再本地比对之后，**必须有个东西证明
+       「选中的还是配置要的那个」**，否则提速很可能悄悄变成「选错档位」，
+       而选错票价是真花钱的事。
+
+       几个刻意埋进去的坑（都是真站上会遇到的）：
+         · 场次里有「无票」的那一档 —— 配置没要它就不许点它
+         · 票价里有「缺货」的一档 —— 同上
+         · 城市里同时有「北京」和「北京（大兴）」—— 前缀重合，
+           用来验证「匹配的是配置那一个」
+         · 名字里带标记的那一档是**默认选中**的，能看出脚本到底点了谁
+       =================================================================== -->
+
+  <h4>城市</h4>
+  <div class="bui-dm-tour" id="tourList">
+    <div class="tour-card" data-city="上海">上海</div>
+    <div class="tour-card" data-city="北京">北京</div>
+    <div class="tour-card" data-city="北京（大兴）">北京（大兴）</div>
+  </div>
+
+  <h4>场次</h4>
+  <div class="sku-times-card" id="timesList">
+    <div class="bui-dm-sku-card-item" data-date="2026-12-04">2026-12-04 周五 19:30 无票</div>
+    <div class="bui-dm-sku-card-item" data-date="2026-12-05">2026-12-05 周六 19:30</div>
+    <div class="bui-dm-sku-card-item" data-date="2026-12-06">2026-12-06 周日 19:30</div>
+  </div>
+
+  <h4>票价</h4>
+  <div class="sku-tickets-card" id="ticketsList">
+    <div class="item-content" data-price="380">380 元</div>
+    <div class="item-content" data-price="580">580 元</div>
+    <div class="item-content" data-price="880">880 元 缺货</div>
+  </div>
+
+  <div>
+    <div class="tab" id="tabSeat">选座购买</div>
+    <div class="tab" id="tabNoSeat">不选座购买</div>
+  </div>
+  <div class="buy__button__text" id="buyBtn">选座购买</div>
+<script>
+  // ---- 选择行为的记录（用例靠它判断「到底点了哪一个」）----
+  window.__picked = {city: null, date: null, price: null};
+  window.__clickCount = {city: 0, date: 0, price: 0};
+
+  function bind(listId, key, attr) {
+    var box = document.getElementById(listId);
+    if (!box) return;
+    var items = box.querySelectorAll('[' + attr + ']');
+    for (var i = 0; i < items.length; i++) {
+      (function (el) {
+        el.addEventListener('click', function () {
+          window.__picked[key] = el.getAttribute(attr);
+          window.__clickCount[key] += 1;
+          // 同一组里只有一个高亮（和真站的视觉状态一致）
+          for (var j = 0; j < items.length; j++) {
+            items[j].classList.remove('picked');
+          }
+          el.classList.add('picked');
+        });
+      })(items[i]);
+    }
+  }
+  bind('tourList', 'city', 'data-city');
+  bind('timesList', 'date', 'data-date');
+  bind('ticketsList', 'price', 'data-price');
+
+  // ?noseat=0 → 这个演出不支持不选座，页面里没有「不选座购买」入口
+  var supportsNoSeat = location.search.indexOf('noseat=0') < 0;
+  var mode = 'seat';
+
+  var tabNoSeat = document.getElementById('tabNoSeat');
+  if (supportsNoSeat) {
+    tabNoSeat.onclick = function () {
+      mode = 'noseat';
+      document.getElementById('buyBtn').textContent = '不选座购买';
+    };
+  } else {
+    tabNoSeat.remove();
+  }
+
+  document.getElementById('tabSeat').onclick = function () {
+    mode = 'seat';
+    document.getElementById('buyBtn').textContent = '选座购买';
+  };
+
+  document.getElementById('buyBtn').onclick = function () {
+    var target = (mode === 'noseat') ? 'order.html' : 'seat.html';
+    // ?slow=1200 → 点完 1.2 秒后才跳转，用来复刻"点击到跳转之间那段空窗期"
+    var m = location.search.match(/slow=(\d+)/);
+    var delay = m ? parseInt(m[1], 10) : 0;
+    if (delay > 0) {
+      setTimeout(function () { location.href = target; }, delay);
+    } else {
+      location.href = target;
+    }
+  };
+</script>
+</body>
+</html>

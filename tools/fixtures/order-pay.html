@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 复刻真站的一种时序：地址是订单页、标题是「确认购买」，页面其实会被换成风控提示页 ——
+     而且那句话是等一会儿才渲染出来的。
+
+     文件名里的 order-pay 才是重点：真站订单页是 https://m.damai.cn/shows/order-pay.html，
+     `_is_h5_order_page()` 先看地址，所以这个夹具会被当成订单页走 H5 那一套。
+
+     时序：先给一个没有观演人区的空订单页；600 毫秒后再把正文换成风控那句话。
+     这 600 毫秒就是「进页面那一下查风控」查早了的那个窗口 ——
+     那一下什么都查不到，只有在「等观演人列表」那几秒里补查才能发现。 -->
+<title>确认购买</title>
+<style>
+  body { margin: 0; font-family: sans-serif; color: #333; padding: 24px; }
+</style>
+</head>
+<body>
+  <div id="app">订单确认</div>
+  <script>
+    // 600 毫秒后整页换成风控提示。正文里那句「检测到您的访问异常」是判据。
+    setTimeout(function () {
+      document.body.innerHTML = '<div>亲，检测到您的访问异常，请重新试试吧~</div>'
+                              + '<button>努力刷新</button>';
+    }, 600);
+  </script>
+</body>
+</html>

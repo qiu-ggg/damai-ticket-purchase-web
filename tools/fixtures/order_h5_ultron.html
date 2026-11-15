@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>确认购买</title>
+<!--
+  假页面：第二代大麦 H5 订单确认页（m.damai.cn/app/dmfe/h5-ultron-buy/index.html）
+
+  这个文件的**结构不是猜的**：2026-10-08 从线上
+    https://g.alicdn.com/dmfe/h5-ultron-buy/2025.09.18/index.min.js
+  里 `dmViewer` 组件的 React 渲染代码逐字读出来的。真实 JSX 是：
+
+    <div style={list} onClick={headleTap}>              ← 整行可点，**没有 class**
+      <div>
+        <div className={isDisabled && !disableReason ? "viewer-list-disable" : ""}>
+          <div className="viwer-info-name">              ← 姓名容器
+            <div style={name}>{viewerName}</div>          ← 姓名（无 class，只有 style）
+            {isPrivilege && <div className="viwer-info-name-tag">…特权观演人…</div>}
+          </div>
+          <div style={info}>
+            <div style={typedesc}>{idTypeDesc}</div>
+            <div style={number}>{hashIdentityNo}</div>
+          </div>
+        </div>
+        <div>{disableReason && <div className="viwer-info-tips">…</div>}</div>
+      </div>
+      <div className={isDisabled ? "viewer-list-disable" : ""} style={icon_dom}>
+        {isUsed && <i className="iconfont icondanxuan-xuanzhong_"/>}   ← 选中
+        {!isUsed && <i className="iconfont icondanxuan-weixuan_"/>}    ← 未选
+      </div>
+    </div>
+
+  和第一代（order_h5.html / order-pay.html）**最要命的两点区别**：
+
+   1. 类名是 **viwer** —— 大麦自己把 viewer 拼错了。照它的拼写找才对，
+      「顺手改成正确拼写」会让整套选择器一个都匹配不上。
+   2. 整页**没有任何 input[type=checkbox]**。勾选态是图标字体画的
+      （i.icondanxuan-xuanzhong_ / i.icondanxuan-weixuan_）。
+      所有「读 checked」的判据在这一页上永远读到 0 —— 既枚举不出行，
+      也读不出勾没勾上。
+
+  再加上「整行没有 class」，行只能从姓名容器往上爬到「含勾选图标的那层」。
+  这三条合起来就是真站那次「点了没反应、观演人一个都没勾上、订单没提交、
+  而且不报错」的全部原因。
+
+  几个必须复刻的行为契约（漏掉就把 bug 测没了）：
+   1. toggle 挂在**整行**的 onClick 上（子元素点击冒泡上来）
+   2. 已选满（selectedNum == buyerTotalNum）再点别人 → toast「所需观演人已选齐」，不改状态
+   3. isDisabled 的行点了 → toast「该项目暂不支持此证件类型」，**不改状态**
+   4. 有 disableReason 的行点了 → 真站会跳走去改证件；这里只 toast，绝不 toggle
+   5. 协议没勾 → 提交被拦下并 toast，**不会**提交
+   6. 观演人没选齐 → 提交被拦下并 toast
+   7. 提交成功 → window.__submitted = true、标题变「收银台」
+
+  ★ 这个夹具的**协议框和提交按钮故意用另一套标记**（真实站点这两块是
+    服务端模板 dmProtocol / dmSubmit 下发的 DOM，类名不由前端包决定，
+    会变）。夹具里给的是「一个没有 class 的真复选框 + 一个只有文案的 div」，
+    逼脚本走「按文案找」那条兜底 —— 只靠 .dmprotocol-box / .pay-submit-btn
+    写死的实现在这里会一步都走不动。
+
+  query 参数：
+   ?max=2        可选 2 个观演人（默认 1）
+   ?viewers=8    生成 8 行观演人，且**目标观演人排最后一行**（要滚下去才点得到）
+   ?tall=900     在列表上方塞 900px 空白
+   ?render=2500  观演人列表 2500ms 后才渲染出来（复刻「接口异步拉」）
+   ?skin=blank   把勾选图标整个去掉，改用 iconDiv 上的一个 class 表示选中
+                 ← 复刻「两代选择器全对不上」。这时脚本必须靠
+                   「点一下、看这一行的外观指纹变没变」把它认出来。
+   ?slow=800     提交后 800ms 才改状态
+-->
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #f4f5f6; color: #030b1a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: 90px;
+  }
+  .viewer { width: 100vw; background: #fff; }
+  .viewer-info-pad { padding-left: 42px; padding-right: 42px; }
+  .viwer-info-name { display: flex; flex-direction: row; align-items: center; }
+  .viewer-list-disable { opacity: .5; }
+  /* 图标字体在真站是 ::before 画出来的字形；这里给个同尺寸的方块代替，
+     只要保证「有宽高、点得到、class 能区分选中/未选」就够了。 */
+  .iconfont { display: inline-block; width: 18px; height: 18px; font-size: 18px; line-height: 18px; }
+  .icondanxuan-xuanzhong_ { color: #ff2869; }
+  .icondanxuan-weixuan_ { color: #dddddd; }
+  .icondanxuan-xuanzhong_:before { content: "\25C9"; }
+  .icondanxuan-weixuan_:before { content: "\25CB"; }
+  .viwer-info-tips { color: #FF2869; font-size: 12px; display: flex; align-items: center; }
+  .viwer-info-name-tag { color: #ff6666; display: flex; flex-shrink: 0; }
+  .view-info-name-text { font-size: 11px; }
+  .viwer-info-name-tag .view-info-div { border: 1px solid #ff6666; border-radius: 3px; padding: 0 3px; }
+  /* 底部：真实站点这两块由服务端模板渲染，夹具这里刻意不给它们类名 */
+  #protocolRow {
+    display: flex; align-items: center; gap: 6px;
+    padding: 12px 14px; font-size: 12px; color: #69717c; background: #fff;
+  }
+  #submitRow {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: #fff; border-top: 1px solid #dcdfe6;
+    display: flex; align-items: center; justify-content: center; padding: 9px 12px;
+  }
+  #paySubmitBtn {
+    display: flex; align-items: center; justify-content: center;
+    width: 140px; height: 44px; border-radius: 8px;
+    background: linear-gradient(90deg, #ff8500, #ff5000);
+    color: #fff; font-size: 18px; cursor: pointer;
+  }
+  .price-num { color: #030b1a; font-size: 21px; font-weight: 700; margin-right: auto; }
+  #toast {
+    position: fixed; left: 50%; top: 40%; transform: translate(-50%, -50%);
+    background: rgba(0,0,0,.8); color: #fff; padding: 10px 16px; border-radius: 6px;
+    font-size: 14px; display: none; z-index: 99;
+  }
+  #cashier { padding: 40px; font-size: 20px; }
+</style>
+</head>
+<body data-spm="orderconfirm">
+<div id="tallTop"></div>
+<div id="root"></div>
+<!-- 底部（协议条 + 提交条）**不在初始 HTML 里**，由 JS 挂载。
+     真站上这两块是服务端模板下发的，比观演人列表晚一步出现 ——
+     ?bottom=3000 就是复刻「列表出来了、底部还是空的」那一瞬间。 -->
+<div id="toast"></div>
+
+<script>
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var buyerTotalNum = parseInt(qs.get('max') || '1', 10);
+  var slow = parseInt(qs.get('slow') || '0', 10);
+  var renderDelay = parseInt(qs.get('render') || '0', 10);
+  var blankSkin = qs.get('skin') === 'blank';
+
+  // 真实接口字段名：viewerName / idTypeDesc / hashIdentityNo
+  // isUsed = 勾上没勾上；isDisabled = 这个人这次不能买
+  // disableReason = 大麦标了原因（点它会跳走去改证件）
+  // isPrivilege = 特权观演人（姓名旁边会多一个小标签）
+  var viewerList = [
+    {viewerId: 1, viewerName: '王小明', idTypeDesc: '身份证', hashIdentityNo: '110***********1234',
+     isUsed: false, isDisabled: false, isPrivilege: false},
+    {viewerId: 2, viewerName: '李小红', idTypeDesc: '身份证', hashIdentityNo: '310***********5678',
+     isUsed: false, isDisabled: false, isPrivilege: true},
+    {viewerId: 3, viewerName: '张三', idTypeDesc: '护照', hashIdentityNo: 'E1********1',
+     isUsed: false, isDisabled: false, isPrivilege: false,
+     disableReason: '该证件类型本场不支持', sceneType: 1}
+  ];
+
+  var viewers = parseInt(qs.get('viewers') || '0', 10);
+  if (viewers > 3) {
+    var target = viewerList[0];
+    var tail = viewerList.slice(1);
+    var filler = [], n = 0;
+    while (tail.length + filler.length < viewers - 1) {
+      n += 1;
+      filler.push({viewerId: 100 + n, viewerName: '演员甲' + n, idTypeDesc: '身份证',
+                   hashIdentityNo: '440***********' + (1000 + n), isUsed: false,
+                   isDisabled: false, isPrivilege: false});
+    }
+    viewerList = filler.concat(tail, [target]);   // 目标排最后 → 要滚下去
+  }
+
+  window.__viewerList = viewerList;
+  window.__targetName = '王小明';
+  window.__selectedCount = function () {
+    return viewerList.filter(function (v) { return v.isUsed; }).length;
+  };
+
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.style.display = 'none'; }, 1800);
+    window.__lastToast = msg;
+  }
+
+  // ---- 渲染：逐条对着真实 JSX 抄 ----
+  function render() {
+    var root = document.getElementById('root');
+    root.innerHTML = '';
+    if (!viewerList.length) return;
+
+    var block = document.createElement('div');
+    block.className = 'viewer';
+    block.style.width = '100vw';
+    block.style.background = '#fff';
+    var pad = document.createElement('div');
+    pad.className = 'viewer-info-pad';
+    pad.style.paddingLeft = '42px';
+    pad.style.paddingRight = '42px';
+    block.appendChild(pad);
+
+    viewerList.forEach(function (v, idx) {
+      // ---- 整行：**没有 class**，onClick 挂在这里 ----
+      var row = document.createElement('div');
+      row.setAttribute('data-vid', String(v.viewerId));
+      row.style.height = 'auto';
+      row.style.minHeight = '56px';
+      row.style.display = 'flex';
+      row.style.flexDirection = 'row';
+      row.style.justifyContent = 'space-between';
+      row.style.alignItems = 'center';
+      row.style.marginBottom = (idx === viewerList.length - 1) ? '0' : '13px';
+
+      var innerWrap = document.createElement('div');
+
+      // className 只在 isDisabled && !disableReason 时给
+      var disableDiv = document.createElement('div');
+      if (v.isDisabled && !v.disableReason) disableDiv.className = 'viewer-list-disable';
+
+      var nameBox = document.createElement('div');
+      nameBox.className = 'viwer-info-name';
+      var nameEl = document.createElement('div');
+      nameEl.style.fontSize = '16px';
+      nameEl.style.color = '#000000';
+      nameEl.style.maxWidth = '225px';
+      nameEl.style.marginRight = '4.5px';
+      nameEl.style.overflow = 'hidden';
+      nameEl.style.textOverflow = 'ellipsis';
+      nameEl.style.whiteSpace = 'nowrap';
+      nameEl.textContent = v.viewerName;
+      nameBox.appendChild(nameEl);
+      if (v.isPrivilege) {
+        var tag = document.createElement('div');
+        tag.className = 'viwer-info-name-tag';
+        var tagDiv = document.createElement('div');
+        tagDiv.className = 'view-info-div';
+        var tagTxt = document.createElement('span');
+        tagTxt.className = 'view-info-name-text';
+        tagTxt.textContent = '特权观演人';
+        tagDiv.appendChild(tagTxt);
+        tag.appendChild(tagDiv);
+        nameBox.appendChild(tag);
+      }
+
+      var info = document.createElement('div');
+      info.style.display = 'flex';
+      info.style.flexDirection = 'row';
+      info.style.flex = '1';
+      info.style.marginTop = '3px';
+      var typedesc = document.createElement('div');
+      typedesc.style.fontSize = '12px';
+      typedesc.style.color = '#9C9CA5';
+      typedesc.style.marginRight = '9px';
+      typedesc.textContent = v.idTypeDesc;
+      var number = document.createElement('div');
+      number.style.fontSize = '12px';
+      number.style.color = '#9C9CA5';
+      number.style.flex = '1';
+      number.textContent = v.hashIdentityNo;
+      info.appendChild(typedesc);
+      info.appendChild(number);
+
+      disableDiv.appendChild(nameBox);
+      disableDiv.appendChild(info);
+      innerWrap.appendChild(disableDiv);
+
+      var tipsWrap = document.createElement('div');
+      if (v.disableReason) {
+        var tips = document.createElement('div');
+        tips.className = 'viwer-info-tips';
+        var tipIcon = document.createElement('i');
+        tipIcon.className = 'iconfont icontixingmian_';
+        var tipTxt = document.createElement('span');
+        tipTxt.textContent = v.disableReason;
+        tips.appendChild(tipIcon);
+        tips.appendChild(tipTxt);
+        // 真实代码在这里 stopPropagation（点提示是「去改证件」，不是勾选）
+        tips.addEventListener('click', function (ev) { ev.stopPropagation(); });
+        tipsWrap.appendChild(tips);
+      }
+      innerWrap.appendChild(tipsWrap);
+      row.appendChild(innerWrap);
+
+      // ---- 右侧勾选态：className 只在 isDisabled 时给 ----
+      var iconDiv = document.createElement('div');
+      if (v.isDisabled) iconDiv.className = 'viewer-list-disable';
+      if (blankSkin) {
+        // ?skin=blank：两代图标都不给，改用这个 class 表示选中与否。
+        // 脚本这时候任何类名都认不出来，只能靠「点一下看这行变没变」。
+        iconDiv.classList.add(v.isUsed ? 'row-state-on' : 'row-state-off');
+      } else {
+        var icon = document.createElement('i');
+        icon.className = 'iconfont ' + (v.isUsed ? 'icondanxuan-xuanzhong_'
+                                                 : 'icondanxuan-weixuan_');
+        iconDiv.appendChild(icon);
+      }
+      row.appendChild(iconDiv);
+
+      // onClick 在【整行】—— 子元素点击冒泡上来
+      row.addEventListener('click', function () { tap(v); });
+      pad.appendChild(row);
+    });
+
+    root.appendChild(block);
+  }
+
+  // 和真实 headleTap 一一对应
+  function tap(v) {
+    if (v.disableReason) { toast(v.disableReason); return; }   // 真站会跳走改证件
+    if (v.isDisabled) { toast('该项目暂不支持此证件类型'); return; }
+    var selectedNum = window.__selectedCount();
+    if (v.isUsed) {
+      v.isUsed = false;
+    } else {
+      if (selectedNum >= buyerTotalNum) { toast('所需观演人已选齐'); return; }
+      v.isUsed = true;
+    }
+    render();
+    window.__toggleCount = (window.__toggleCount || 0) + 1;
+  }
+
+  function selectedNames() {
+    return viewerList.filter(function (v) { return v.isUsed; })
+                     .map(function (v) { return v.viewerName; });
+  }
+
+  // 协议勾没勾上 —— 两种载体都支持：
+  //   · 有真复选框就读 checked；
+  //   · 只有图标（`?proto=icon`，复刻真站）就看图标 class。
+  function protocolChecked() {
+    // ★ 图标优先：真站上「图标才是真实的勾选态载体」，
+    //   行里那个 input 只是模板带出来的影子，永远不 checked。
+    var icon = document.getElementById('protocolIcon');
+    if (icon) return icon.className.indexOf('xuanzhong') >= 0;
+    var inp = document.getElementById('protocolInput');
+    if (inp) return !!inp.checked;
+    return true;
+  }
+
+  function submitHandler() {
+    window.__submitClicks = (window.__submitClicks || 0) + 1;
+    if (!protocolChecked()) { toast('请先阅读并同意购票须知'); return; }
+    if (window.__selectedCount() !== buyerTotalNum) {
+      toast('请选择 ' + buyerTotalNum + ' 位观演人'); return;
+    }
+    window.__submittedNames = selectedNames();
+    function done() {
+      window.__submitted = true;
+      document.title = '收银台';
+      var c = document.createElement('div');
+      c.id = 'cashier';
+      c.textContent = '订单提交成功，请在 15 分钟内完成支付';
+      document.body.appendChild(c);
+    }
+    if (slow > 0) { setTimeout(done, slow); } else { done(); }
+  }
+
+  // ---- 提交按钮的形态可调（真站底部是服务端模板渲染的，文案/标签/有无都可能变）----
+  //   ?btntext=立即购票     换文案
+  //   ?btntag=p            把文案包一层别的标签（真站出现过 <div><p>提交订单</p></div>）
+  //   ?nobtn=1             干脆没有提交按钮（演「结构又变了」那一出）
+  function shapeSubmit() {
+    var b = document.getElementById('paySubmitBtn');
+    if (!b) return;
+    var noBtn = qs.get('nobtn') === '1';
+    var btnTag = qs.get('btntag');
+    var btnText = qs.get('btntext');
+    if (noBtn) { b.parentNode.removeChild(b); return; }
+    if (btnTag) {
+      b.innerHTML = '<' + btnTag + '>' + b.textContent + '</' + btnTag + '>';
+    }
+    if (btnText) {
+      var leaf = b.children.length ? b.children[0] : b;
+      leaf.textContent = btnText;
+    }
+  }
+
+  // ---- 底部（协议条 + 提交条）挂载 ----
+  // ★ 真站上这两块比观演人列表晚一步出现（服务端模板下发）。
+  //   ?bottom=3000 = 底部 3000ms 后才挂上 —— 用来验「脚本会不会等底部」。
+  //   不等的话，脚本会在底部还是空的时候判「找不到提交订单按钮」而整单放弃，
+  //   而且不报错 —— 2026-10-08 实跑日志里就是这个现象。
+  var bottomDelay = parseInt(qs.get('bottom') || '0', 10);
+  // ?proto=icon   协议行里**没有复选框**，勾选态是图标字体画的
+  //               （复刻真站：大麦这一代的勾选框就是 i.icondanxuan-* 画的，
+  //                协议和观演人用的是同一个组件）
+  var protoMode = qs.get('proto') || '';
+  function mountBottom() {
+    if (document.getElementById('submitRow')) return;
+    var protoHtml;
+    if (protoMode === 'icon' || protoMode === 'shadow') {
+      // ?proto=icon    只有图标，整行没有 input
+      // ?proto=shadow  图标 + 一个**永远不 checked 的影子 input**
+      //                —— 这才是真站的形态（2026-10-09 实跑）：脚本原来先读
+      //                那个 input，读出来永远 False，于是判「有协议框但没勾上」，
+      //                而真实状态其实一直躺在图标里。
+      // ★ disabled 是刻意的：真站上那个 input 是模板带出来的**纯装饰**，
+      //   连 JS 直接 .click() 都改不动它的 checked。
+      //   不留这一手的话，老代码会绕道「JS click 隐藏 input」蒙对 ——
+      //   自证就红不了，等于没钉住。
+      var shadow = (protoMode === 'shadow')
+        ? '  <input type="checkbox" id="protocolInput" style="display:none" disabled>'
+        : '';
+      protoHtml = '<div id="protocolRow">' + shadow +
+        '  <i class="iconfont icondanxuan-weixuan_" id="protocolIcon"></i>' +
+        '  <span>我已阅读并同意</span>' +
+        '  <a href="javascript:void(0)">《购票须知》</a>' +
+        '</div>';
+    } else {
+      protoHtml = '<div id="protocolRow">' +
+        '  <input type="checkbox" id="protocolInput">' +
+        '  <span>我已阅读并同意</span>' +
+        '  <a href="javascript:void(0)">《购票须知》</a>' +
+        '</div>';
+    }
+    // ?noproto=1   干脆不渲染协议条（演「这一场页面上没有协议框」那一出）
+    if (qs.get('noproto') === '1') { protoHtml = ''; }
+    var wrap = document.createElement('div');
+    wrap.innerHTML =
+      protoHtml +
+      '<div id="submitRow">' +
+      '  <span class="price-num">￥380</span>' +
+      '  <div id="paySubmitBtn">提交订单</div>' +
+      '</div>';
+    while (wrap.firstChild) { document.body.appendChild(wrap.firstChild); }
+    document.getElementById('paySubmitBtn').addEventListener('click', submitHandler);
+    // ?trap=1  提交按钮被一个**透明链接**盖住 —— 复刻
+    //          「点提交订单没反应、有时候还会跳到淘宝」那个现象。
+    //          点下去命中的是链接（跳淘宝），或者事件被它吃掉（「没反应」）。
+    if (qs.get('trap') === '1') {
+      var btnEl = document.getElementById('paySubmitBtn');
+      var wr = document.createElement('div');
+      wr.id = 'submitWrap';
+      wr.style.position = 'relative';
+      wr.style.display = 'inline-block';
+      btnEl.parentNode.insertBefore(wr, btnEl);
+      wr.appendChild(btnEl);
+      var trap = document.createElement('a');
+      trap.id = 'trapLink';
+      trap.href = 'javascript:void(0)';   // 夹具里不真的导航，只要能认出「是链接」
+      trap.setAttribute('data-real-href', 'https://www.taobao.com/');
+      trap.style.position = 'absolute';
+      trap.style.left = '0';
+      trap.style.top = '0';
+      trap.style.right = '0';
+      trap.style.bottom = '0';
+      trap.style.zIndex = '5';
+      wr.appendChild(trap);
+    }
+    if (protoMode === 'icon' || protoMode === 'shadow') {
+      // 真站把 toggle 挂在**整行**上（点图标也行，会冒泡上来）
+      document.getElementById('protocolRow').addEventListener('click', function (ev) {
+        if (ev.target && ev.target.tagName === 'A') return;   // 点《购票须知》不算勾选
+        var icon = document.getElementById('protocolIcon');
+        if (!icon) return;
+        icon.className = (icon.className.indexOf('xuanzhong') >= 0)
+          ? 'iconfont icondanxuan-weixuan_'
+          : 'iconfont icondanxuan-xuanzhong_';
+        window.__protocolToggles = (window.__protocolToggles || 0) + 1;
+      });
+    }
+    shapeSubmit();
+    window.__bottomRendered = true;
+  }
+  if (bottomDelay > 0) {
+    window.__bottomRendered = false;
+    setTimeout(mountBottom, bottomDelay);
+  } else {
+    mountBottom();
+  }
+
+  // ?card=1  页面顶部放一张**演出信息卡片**（含「实名制购票」这类词）。
+  //          2026-10-09 00:57 实跑：协议文案清单里有「实名制购票」，
+  //          而这张卡片里就有它 —— 于是脚本把整张卡片当成了协议行，
+  //          对着它报「有协议框但没勾上」，真凶（页面上压根没有协议条）
+  //          被这句话盖住了两轮排查。
+  if (qs.get('card') === '1') {
+    var card = document.createElement('div');
+    card.id = 'showCard';
+    card.className = 'tpl-wrapper';
+    card.innerHTML =
+      '<div>【示例市】2026 示例歌手「示例巡演」巡回音乐会·示例站</div>' +
+      '<div>示例市 | 示例剧场</div>' +
+      '<div>2026.01.01 19:00</div>' +
+      '<div>￥188.00票档 ×1张</div>' +
+      '<span>实名制购票</span><span>不支持退</span>' +
+      '<span>电子票</span><span>电子发票</span>' +
+      '<i class="iconfont icondanxuan-weixuan_" id="cardIcon"></i>';
+    var rootEl = document.getElementById('root');
+    rootEl.parentNode.insertBefore(card, rootEl);
+  }
+
+  var tall = parseInt(qs.get('tall') || '0', 10);
+  if (tall > 0) {
+    document.getElementById('tallTop').style.height = tall + 'px';
+    document.getElementById('tallTop').style.background = '#eceff3';
+  }
+
+  if (renderDelay > 0) {
+    window.__viewerRendered = false;
+    setTimeout(function () { render(); window.__viewerRendered = true; }, renderDelay);
+  } else {
+    render();
+    window.__viewerRendered = true;
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "index_url": "https://passport.damai.cn/login?ru=https%3A%2F%2Fwww.damai.cn%2F",
+  "login_url": "https://passport.damai.cn/login?ru=https%3A%2F%2Fwww.damai.cn%2F",
+  "target_url": "https://detail.damai.cn/item.htm?spm=a2oeg.home.card_1.ditem_6.591b23e1384cEZ&id=0000000000000",
+  "users": [],
+  "city": "北京",
+  "dates": [
+    "2026-12-05"
+  ],
+  "prices": [
+    "380"
+  ],
+  "if_listen": true,
+  "if_commit_order": false,
+  "max_retries": 10000,
+  "dismiss_mask": true,
+  "no_seat": true,
+  "random_seat": true
+}

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情（同价不同区：全价票188元（站席）/（坐席））</title>
+<!--
+  假页面：同价不同区的「选错区」现场（2026-10-11 独立复核撞出来的）。
+
+  配置里抄的是页面原文「全价票188元（站席）」，页面上还有一档「全价票188元（坐席）」。
+  老的 `_price_match_values` 无条件把配置项展开出裸数字 188，
+  于是原文那条比不过（坐席）之后（这一步本来是对的），裸数字 188 走纯数字分支
+  命中了（坐席）—— 点了同价不同区的另一档。
+
+  页面把「点过哪些档」明明白白摆出来（__clickedKeys / __clickCount / __picked），
+  这样「脚本到底点了哪一档」一眼可辨。
+
+  query 参数（mode）：
+   (默认)         渲染 全价票188元（站席） + 全价票188元（坐席）
+   ?mode=seat_only 只渲染 全价票188元（坐席）
+   ?mode=vip       渲染 VIP 1080元
+   ?mode=plain80   渲染 80元
+-->
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+  .sku-tickets-card .item-content {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .picked { background: #ffe8ec; border-color: #ff2d51 !important; }
+  h4 { margin: 18px 0 6px; font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+  <h4>票价</h4>
+  <div class="sku-tickets-card" id="ticketsList"></div>
+
+  <div class="buy__button__text" id="buyBtn">选座购买</div>
+<script>
+  var mode = (location.search.match(/[?&]mode=([^&]+)/) || [])[1] || 'both';
+  var SETS = {
+    both:      [['站席', '全价票188元（站席）'], ['坐席', '全价票188元（坐席）']],
+    seat_only: [['坐席', '全价票188元（坐席）']],
+    vip:       [['vip', 'VIP 1080元']],
+    plain80:   [['p80', '80元']]
+  };
+  var items = SETS[mode] || SETS.both;
+
+  window.__picked = null;
+  window.__clickedKeys = [];
+  window.__clickCount = {};
+  window.__buyClicked = 0;
+
+  var box = document.getElementById('ticketsList');
+  for (var i = 0; i < items.length; i++) {
+    (function (it) {
+      var el = document.createElement('div');
+      el.className = 'item-content';
+      el.setAttribute('data-key', it[0]);
+      el.textContent = it[1];
+      el.addEventListener('click', function () {
+        window.__picked = it[0];
+        window.__clickedKeys.push(it[0]);
+        window.__clickCount[it[0]] = (window.__clickCount[it[0]] || 0) + 1;
+        var all = box.querySelectorAll('[data-key]');
+        for (var j = 0; j < all.length; j++) all[j].classList.remove('picked');
+        el.classList.add('picked');
+      });
+      box.appendChild(el);
+    })(items[i]);
+  }
+
+  document.getElementById('buyBtn').onclick = function () {
+    window.__buyClicked += 1;
+    location.href = 'seat.html';
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录 - 大麦网</title>
+</head>
+<body>
+  <!--
+    慢加载的假登录页：表单 3 秒后才出现。
+
+    为什么要这个夹具：老代码 `driver.get(登录页)` 之后**立刻**就去找输入框，
+    而真实页面（尤其大麦）不可能在 0 秒内渲染完 —— 日志里
+    「19:37:51 登录状态失效」→「19:37:52 没认出账号输入框」只差 1 秒就是证据。
+    等表单出现这段逻辑必须有测试盯着。
+  -->
+  <h2>大麦登录</h2>
+  <div id="holder">页面加载中…</div>
+  <div id="captcha" style="display:none">请完成安全验证：按住滑块，拖动到最右边</div>
+
+<script>
+  window.__submitted = false;
+  window.__filled = { id: "", pwd: "" };
+  window.__formShownAt = null;
+
+  setTimeout(function () {
+    document.getElementById("holder").innerHTML =
+      '<form id="login-form" action="#">' +
+      '<input id="fm-login-id" name="fm-login-id" type="text" placeholder="请输入手机号或邮箱">' +
+      '<input id="fm-login-password" name="fm-login-password" type="password" placeholder="请输入登录密码">' +
+      '<button type="submit" class="fm-button fm-submit">登录</button>' +
+      '</form>';
+    window.__formShownAt = Date.now();
+    document.getElementById("login-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      window.__submitted = true;
+      window.__filled = {
+        id: document.getElementById("fm-login-id").value,
+        pwd: document.getElementById("fm-login-password").value
+      };
+      document.getElementById("captcha").style.display = "block";
+    });
+  }, 3000);
+</script>
+</body>
+</html>

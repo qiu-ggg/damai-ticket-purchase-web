@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  input { display: block; width: 280px; padding: 10px; margin: 10px 0; font-size: 16px; }
+  button { padding: 10px 30px; font-size: 16px; cursor: pointer; }
+  #captcha { display: none; margin-top: 16px; padding: 12px; background: #fff3cd; }
+</style>
+</head>
+<body>
+  <!--
+    iframe 的内容：和大麦 iframe 里那三个元素一一对应（探针实测）
+      id='fm-login-id'        placeholder='请输入手机号或邮箱'
+      id='fm-login-password'  placeholder='请输入登录密码'
+      button.fm-button.fm-submit  文案「登录」
+    真实 iframe 里默认就是密码登录（没有「扫码/密码」页签），这里也一样。
+  -->
+  <form id="login-form" action="#">
+    <input id="fm-login-id" name="fm-login-id" type="text" placeholder="请输入手机号或邮箱" autocomplete="off">
+    <input id="fm-login-password" name="fm-login-password" type="password" placeholder="请输入登录密码" autocomplete="off">
+    <button type="submit" class="fm-button fm-submit password-login">登录</button>
+  </form>
+  <div id="captcha">请完成安全验证：按住滑块，拖动到最右边</div>
+
+<script>
+  window.__submitted = false;
+  window.__filled = { id: "", pwd: "" };
+
+  document.getElementById("login-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    window.__submitted = true;
+    window.__filled = {
+      id: document.getElementById("fm-login-id").value,
+      pwd: document.getElementById("fm-login-password").value
+    };
+    document.getElementById("captcha").style.display = "block";
+  });
+</script>
+</body>
+</html>

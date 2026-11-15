@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>订单确认页</title>
+<style>
+  body { margin: 0; font-family: sans-serif; background: #fff; height: 1200px; }
+  #submitBtn { position: absolute; left: 40px; top: 600px; width: 200px; height: 48px; font-size: 18px; }
+  #backdrop { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,.5); }
+  .next-dialog { position: absolute; left: 50%; top: 120px; transform: translateX(-50%);
+                 width: 360px; height: 420px; background: #fff; border-radius: 8px; }
+  .next-dialog-close { position: absolute; right: 8px; top: 8px; width: 32px; height: 32px;
+                       font-size: 20px; line-height: 1; border: 0; background: #eee; cursor: pointer; }
+</style>
+</head>
+<body>
+  <p>支付方式：支付宝 / 微信支付</p>
+  <label><input type="checkbox" id="u1"><span>王小明</span></label>
+  <button id="submitBtn" class="submit-btn">提交订单</button>
+
+  <!-- 复刻 PC 端「手机扫码购买更便捷」浮层：遮罩正好压在提交按钮上 -->
+  <div id="backdrop">
+    <div class="next-dialog" id="qrDialog">
+      <button class="next-dialog-close" id="dlgClose">×</button>
+      <div style="padding:24px;text-align:center">
+        <div style="font-size:20px;margin:60px 0 20px">手机扫码购买更便捷</div>
+        <div style="width:180px;height:180px;background:#ddd;margin:0 auto;line-height:180px">二维码</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  window.__submitted = false;
+  document.getElementById('submitBtn').onclick = function () { window.__submitted = true; };
+
+  // ?noclose=1 → 浮层没有关闭按钮，用来验证「关不掉就隐藏遮罩」那条兜底路径
+  var q = location.search || '';
+  if (q.indexOf('noclose') >= 0) {
+    document.getElementById('dlgClose').style.display = 'none';
+  }
+  document.getElementById('dlgClose').onclick = function () {
+    document.getElementById('backdrop').style.display = 'none';
+  };
+</script>
+</body>
+</html>

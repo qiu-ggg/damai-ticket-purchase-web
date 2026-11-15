@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- 内容和 risk.html 一模一样，只换了文件名 —— 名字里那个 /pay 才是重点：
+     路径 /fixtures/pay_risk.html 里含 '/pay'，会把「是不是已经在收银台」那条
+     判据（'/pay' in url）勾成真，于是它和风控页判据同时为真。
+     真站上这个组合要凑齐，得让拦截页落在含 /pay 的地址上；当前订单页是
+     order-pay.html（减号不是斜杠），凑不齐。这条用例防的是凑齐的那一天。 -->
+<title>确认购买</title>
+<style>
+  body { margin: 0; font-family: sans-serif; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; height: 100vh; color: #333; }
+</style>
+</head>
+<body>
+  <div>亲，检测到您的访问异常，请重新试试吧~</div>
+  <button>努力刷新</button>
+</body>
+</html>

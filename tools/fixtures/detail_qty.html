@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情（数量选择）</title>
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  .cafe-c-input-number { display: inline-flex; align-items: center; gap: 6px; }
+  .cafe-c-input-number-handler-down,
+  .cafe-c-input-number-handler-up {
+    display: inline-block; padding: 4px 14px; border: 1px solid #ccc;
+    cursor: pointer; user-select: none;
+  }
+  .cafe-c-input-number-input {
+    width: 56px; height: 26px; text-align: center;
+    border: 1px solid #ccc;
+  }
+</style>
+</head>
+<body>
+  <!-- ===================================================================
+       详情页夹具：**只**放一个数量选择控件。
+
+       用途：S38 —— 证明「点 N-1 次『+』」这条路不再每点一次固定睡 0.25 秒。
+       单独开一个夹具、不塞进 detail.html，是因为那段已有 S34/S35 在跑
+       （城市/场次/票价三选），加进去只会让那两条的前提校验多一个变量。
+
+       为什么要把值改成**异步**生效（setTimeout 60ms）：
+       如果点完同步就变，轮询第一下必然命中，测出来的是「轮询器能工作」，
+       而不是「轮询确实比固定睡快、而且慢的时候等得住」。
+       加一点延迟才像真站的受控组件。
+       =================================================================== -->
+
+  <h4>购买数量</h4>
+  <div class="cafe-c-input-number">
+    <a class="cafe-c-input-number-handler-down">-</a>
+    <input class="cafe-c-input-number-input" readonly value="1">
+    <a class="cafe-c-input-number-handler-up">+</a>
+  </div>
+
+<script>
+  // 点了几次「+」（用例靠它断言只点了 N-1 次）
+  window.__clicks = 0;
+  // 值生效的延迟，可用 ?delay=0 关掉
+  var DELAY = (location.search.match(/delay=(\d+)/) || [])[1];
+  DELAY = (DELAY === undefined) ? 60 : parseInt(DELAY, 10);
+
+  var input = document.querySelector('.cafe-c-input-number-input');
+
+  function bump() {
+    window.__clicks += 1;
+    var next = String(parseInt(input.value, 10) + 1);
+    if (DELAY > 0) {
+      setTimeout(function () { input.value = next; }, DELAY);
+    } else {
+      input.value = next;
+    }
+  }
+
+  document.querySelector('.cafe-c-input-number-handler-up').onclick = bump;
+  document.querySelector('.cafe-c-input-number-handler-down').onclick = function () {
+    var v = parseInt(input.value, 10);
+    if (v > 1) input.value = String(v - 1);
+  };
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>订单确认页</title>
+</head>
+<body>
+  <p>支付方式：支付宝 / 微信支付</p>
+  <label><input type="checkbox" id="u1"><span>王小明</span></label>
+  <button id="submitBtn" class="submit-btn">提交订单</button>
+<script>
+  window.__submitted = false;
+  document.getElementById('submitBtn').onclick = function () { window.__submitted = true; };
+</script>
+</body>
+</html>

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<!--
+  详情页 —— 2026-10 起的新形态（Vue 渲染），照 id=1086775381505 那场的真实 DOM 抄的。
+
+  和老夹具（detail.html / detail_calendar.html）的区别，正是客户踩到的三个坑：
+
+  1. 列表容器不是 sku-times-card / sku-tickets-card，而是
+       div.perform__order__select__performs   （场次）
+       div.perform__order__select             （票档，靠 .select_left 的文本区分）
+     条目统一是 div.select_right_list_item。
+
+  2. 条目文案带排版空格：「2026.12.27 19:30␣␣下本」（19:30 和 下本 之间两个空格），
+     并且包在 <span> 里、后面跟一个注释节点（Vue 的占位符）——
+     XPath 的 contains(text(), ...) 是字面比较，对不上。
+
+  3. 点完日历格，场次列表**一段时间内还挂着上一天的旧条目**，之后才换成新的：
+     真站实测 0.22 秒，这里放大到 400ms。所以「列表里有条目」不能当就绪判据。
+
+  URL 参数：
+    ?day27disabled=1  12-27 那天置灰（不许点死格子，必须如实失败）
+    ?nodate=1         场次文案不写日期（只写「19:30 下本」）
+    ?late=1           进场时场次列表先空着，700ms 后才渲染（纯异步列表，没有日历）
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>详情页 · 新形态</title>
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 16px; font-size: 13px; }
+  .perform__order__box { width: 900px; }
+  .perform__order__select { margin-top: 14px; }
+  .select_left { display: inline-block; width: 52px; color: #888; vertical-align: top; }
+  .select_right { display: inline-block; width: 830px; vertical-align: top; }
+  .select_right_list { line-height: 1.6; }
+  .select_right_list_item {
+    display: inline-block; padding: 5px 12px; margin: 0 8px 6px 0;
+    border: 1px solid #ddd; cursor: pointer; white-space: pre-wrap;
+  }
+  .select_right_list_item.active { border-color: #ff2d51; color: #ff2d51; }
+  .select_right_list_item .notticket { color: #999; margin-left: 6px; }
+  .wh_content_all { width: 380px; }
+  .wh_top_changge li { list-style: none; font-weight: bold; }
+  .wh_content { display: flex; flex-wrap: wrap; }
+  .wh_content_item { width: 44px; height: 34px; text-align: center; }
+  .wh_item_date { width: 30px; height: 26px; line-height: 26px; margin: 0 auto;
+                  cursor: pointer; }
+  .wh_item_date.picked { background: #ffe8ec; color: #ff2d51; }
+  .wh_content_item.disabled .wh_item_date { color: #ccc; cursor: default; }
+  .wh_item_date.wh_other_dayhide { color: #eee; }
+  .wh_top_tag { color: #999; }
+  .notice { margin-top: 20px; color: #999; }
+  .buy__button__text { display: inline-block; margin-top: 20px; padding: 10px 22px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="perform__order__box">
+
+  <!-- 日历：日期 + 月历格子 -->
+  <div class="perform__order__select perform__order__select__calendar">
+    <div class="select_left">日期</div>
+    <div class="select_right"><div class="select_right_list">
+      <div class="main-container">
+        <div class="functional-calendar">
+          <div class="calendar-for"><section class="wh_container">
+            <div class="wh_content_all">
+              <div class="wh_top_changge">
+                <li class="wh_content_li"><span class="current">2026年12月</span></li>
+              </div>
+              <div class="wh_content week" id="weekRow"></div>
+              <div class="wh_content month" id="monthRow"></div>
+            </div>
+          </section></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- 场次：容器上多一个 perform__order__select__performs -->
+  <div class="perform__order__select perform__order__select__performs">
+    <div class="select_left">场次</div>
+    <div class="select_right"><div class="select_right_list" id="timesList"></div></div>
+  </div>
+
+  <!-- 票档：和日期、场次共用同一套类名，只能靠左边那个「票档」认 -->
+  <div class="perform__order__select">
+    <div class="select_left">票档</div>
+    <div class="select_right"><div class="select_right_list" id="ticketsList"></div></div>
+  </div>
+
+</div>
+
+<!-- 列表外面的陷阱：文案里也有目标日期和场次名。
+     全场搜索会先撞上它；它点下去不算选中任何场次。 -->
+<div class="notice" id="notice">
+  本演出 2026.12.27 19:30  下本 不支持退换
+</div>
+
+<div class="buy__button__text" id="buyBtn">立即购买</div>
+
+<script>
+  var Q = new URLSearchParams(location.search);
+  var DAY27_DISABLED = Q.get('day27disabled') === '1';
+  var NODATE = Q.get('nodate') === '1';
+  var LATE = Q.get('late') === '1';   // 进场时场次列表先空着，隔一会儿才渲染
+
+  var DAYS = ['2026-12-26', '2026-12-27', '2026-12-28', '2026-12-29'];
+  // 每天有哪些场次。28 号只有一场 —— 用来验证「场次跟着日期走」。
+  var SESS = {
+    '2026-12-26': ['14:00 上本', '19:30 下本'],
+    '2026-12-27': ['14:00 上本', '19:30 下本'],
+    '2026-12-28': ['19:30 下本'],
+    '2026-12-29': ['13:30 上本', '18:30 下本']
+  };
+  var PRICES = [
+    {p: '80',  t: '80.0元',  sold: true},
+    {p: '280', t: '280.0元', sold: false},
+    {p: '480', t: '480.0元', sold: false},
+    {p: '680', t: '680.0元', sold: false}
+  ];
+
+  var STAGE_DELAY = 400;   // 点完日历格到列表换成新的，隔这么久
+  var PRICE_DELAY = 200;
+
+  window.__day = '2026-12-26';
+  window.__picked = {date: null, session: null, price: null};
+  window.__clickCount = {day: 0, session: 0, price: 0, notice: 0};
+  window.__staleClicks = 0;    // 「旧条目还挂着」的时候点了几次
+  window.__stale = false;
+  window.__renders = 0;
+  window.__buyClicked = 0;
+
+  // ---- 日历 ----
+  var week = document.getElementById('weekRow');
+  ['周一', '周二', '周三', '周四', '周五', '周六', '周日'].forEach(function (w) {
+    var d = document.createElement('div');
+    d.className = 'wh_content_item';
+    d.innerHTML = '<div class="wh_top_tag">' + w + '</div>';
+    week.appendChild(d);
+  });
+
+  var month = document.getElementById('monthRow');
+  var layout = [{n: 30, other: true}];
+  for (var i = 1; i <= 31; i++) {
+    layout.push({n: i, other: false});
+  }
+  layout.forEach(function (item) {
+    var cell = document.createElement('div');
+    var isTarget = !item.other && item.n >= 26 && item.n <= 29;
+    var dead = item.other || !isTarget || (item.n === 27 && DAY27_DISABLED);
+    cell.className = 'wh_content_item' + (dead ? ' disabled' : '');
+    cell.innerHTML = '<div class="wh_item_date' +
+      (item.other ? ' wh_other_dayhide' : '') + ' cursor-pointer">' + item.n + '</div>';
+    var d = cell.querySelector('.wh_item_date');
+    d.setAttribute('data-day',
+      (!item.other && item.n >= 26 && item.n <= 29) ? '2026-12-' + item.n : '');
+    d.addEventListener('click', function () {
+      var target = d.getAttribute('data-day');
+      if (!target) return;
+      window.__clickCount.day += 1;
+      window.__day = target;
+      var all = document.querySelectorAll('.wh_item_date');
+      for (var j = 0; j < all.length; j++) all[j].classList.remove('picked');
+      d.classList.add('picked');
+      // 旧条目**先留着**，隔 STAGE_DELAY 才换 —— 真站就是这样，
+      // 「列表里有条目」在这段时间里是假的。
+      window.__stale = true;
+      setTimeout(function () {
+        renderSessions(window.__day);
+        window.__stale = false;
+      }, STAGE_DELAY);
+    });
+    month.appendChild(cell);
+  });
+
+  // 12-26 默认选中
+  var first = month.querySelector('[data-day="2026-12-26"]');
+  if (first) first.classList.add('picked');
+
+  // ---- 场次 ----
+  function sessText(day, i) {
+    // 真站这里时刻和场次名之间是**两个空格**（模板里排版留下的），
+    // 客户从别处抄来的配置只有一个 —— XPath 的字面 contains 就是在这儿对不上的。
+    var v = SESS[day][i].replace(' ', '  ');
+    return NODATE ? v : day.replace(/-/g, '.') + ' ' + v;
+  }
+
+  function renderSessions(day) {
+    var box = document.getElementById('timesList');
+    box.innerHTML = '';
+    (SESS[day] || []).forEach(function (_, i) {
+      var el = document.createElement('div');
+      el.className = 'select_right_list_item';
+      el.setAttribute('data-date', day);
+      // Vue 渲染出来的样子：文本外面裹着缩进换行，后面跟一个占位注释节点。
+      // 就是那段缩进让「19:30」和「下本」之间出现了两个空格。
+      el.innerHTML = '<span>\n        ' + sessText(day, i) +
+                     '\n        <!----></span>';
+      // 页面默认选中第一场（26 号 14:00），客户要的是 19:30 —— 必须点对。
+      if (day === '2026-12-26' && i === 0) el.className += ' active';
+      el.addEventListener('click', function () {
+        if (window.__stale) window.__staleClicks += 1;
+        window.__picked.date = day;
+        window.__picked.session = sessText(day, i);
+        window.__clickCount.session += 1;
+        var all = box.querySelectorAll('.select_right_list_item');
+        for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
+        el.classList.add('active');
+        renderPrices();
+      });
+      box.appendChild(el);
+    });
+    window.__renders += 1;
+  }
+
+  // ---- 票档 ----
+  function renderPrices() {
+    var box = document.getElementById('ticketsList');
+    box.innerHTML = '';
+    setTimeout(function () {
+      PRICES.forEach(function (item) {
+        var el = document.createElement('div');
+        el.className = 'select_right_list_item sku_item';
+        el.setAttribute('data-price', item.p);
+        el.innerHTML = '<div class="skuname">\n        ' + item.t +
+          '\n        <!---->' +
+          (item.sold ? ' <span class="notticket">\n        缺货登记\n      </span>' : '') +
+          '</div>';
+        el.addEventListener('click', function () {
+          if (item.sold) return;
+          window.__picked.price = item.p;
+          window.__clickCount.price += 1;
+          var all = box.querySelectorAll('.select_right_list_item');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
+          el.classList.add('active');
+        });
+        box.appendChild(el);
+      });
+    }, PRICE_DELAY);
+  }
+
+  document.getElementById('notice').addEventListener('click', function () {
+    window.__clickCount.notice += 1;
+  });
+  document.getElementById('buyBtn').onclick = function () { window.__buyClicked += 1; };
+
+  // 进场时场次列表：?late=1 → 先空着，隔 700ms 才渲染出来（没有日历参与）
+  if (LATE) {
+    setTimeout(function () { renderSessions(window.__day); }, 700);
+  } else {
+    renderSessions(window.__day);
+  }
+  renderPrices();
+  // 票档默认选中 480（页面默认的那一档，不是客户要的 280）
+  setTimeout(function () {
+    var def = document.querySelector('#ticketsList [data-price="480"]');
+    if (def) def.className += ' active';
+  }, PRICE_DELAY + 60);
+</script>
+</body>
+</html>

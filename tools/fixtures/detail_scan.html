@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情</title>
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+  .scan-buy { margin-top: 12px; width: 210px; padding: 10px; border: 1px solid #eee; }
+  .scan-buy .title { font-size: 14px; }
+  .scan-buy .subtitle { font-size: 12px; color: #999; }
+  .qrcode-wrapper { width: 140px; height: 140px; background: #f0f0f0; margin: 8px 0; }
+  .scan-buy .buy-link { font-size: 12px; color: #ff2d51; cursor: pointer;
+                        text-decoration: underline; }
+</style>
+</head>
+<body>
+  <div id="buyArea"></div>
+<script>
+  // -------------------------------------------------------------------------
+  // 复刻真站结构（2026-10-06 在详情页实测到的）：
+  //   点「购买」不跳转，而是把购买按钮整块换成 .scan-buy 扫码浮层，
+  //   于是 [class*="buy__button"] 在 DOM 里**整个消失**（不是被遮罩盖住）。
+  //   唯一出路是点浮层里的 .buy-link「不，选座购票」。
+  //
+  // 这个夹具补的是旧测试的盲区：order.html 只覆盖「按钮还在、被遮罩盖住」，
+  // 复刻不出「按钮直接没了」这种，所以 20:23 那次真站卡死没能被拦下来。
+  //
+  // 参数：
+  //   ?keepbtn=1 → 点掉浮层后购买按钮回来（拒绝扫码之后还得再点一次购买）
+  //   默认       → 点掉浮层后直接进选座页
+  // -------------------------------------------------------------------------
+  var keepBtn = location.search.indexOf('keepbtn=1') >= 0;
+  var rejectedOnce = false;   // 拒绝过一次扫码，真站就不该再弹了
+
+  function mountBuy() {
+    document.getElementById('buyArea').innerHTML =
+      '<div class="buy__button__text" id="buyBtn">选座购买</div>';
+    document.getElementById('buyBtn').onclick = showScanLayer;
+  }
+
+  function showScanLayer() {
+    // 已经拒绝过扫码 → 这次直接放行（复刻真站「拒绝一次就记住」的行为；
+    // 不做这个判断的话夹具自己会无限弹浮层，把测试挂死）
+    if (rejectedOnce) { location.href = 'seat.html'; return; }
+    document.getElementById('buyArea').innerHTML =
+      '<div class="scan-buy">' +
+        '<div class="title">为了更好的购票体验</div>' +
+        '<div class="subtitle">请您移步手机端购买</div>' +
+        '<div class="qrcode-wrapper"><div class="qrcode-container">二维码</div></div>' +
+        '<div class="buy-link">不，选座购票</div>' +
+      '</div>';
+    document.querySelector('.scan-buy .buy-link').onclick = function () {
+      if (keepBtn) { rejectedOnce = true; mountBuy(); }
+      else { location.href = 'seat.html'; }
+    };
+  }
+
+  mountBuy();
+</script>
+</body>
+</html>

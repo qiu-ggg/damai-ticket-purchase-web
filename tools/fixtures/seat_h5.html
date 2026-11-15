@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>选择座位</title>
+<!--
+  假页面：大麦新版 H5 选座页（m.damai.cn/app/dmfe/select-seat-biz/kylin.html）
+
+  类名与行为契约**不是猜的**，是从线上 chunk 里读出来的
+  （show-h5-next/21_seat.35c1ef88.js 与 17_5876.dd33120c.js）。要点：
+
+   1) 座位画在 canvas 上，DOM 里一个座位元素都没有。
+   2) 价位项长这样（可点，点了会 highlightPrice）：
+        div class="price"  [点击 → 高亮本档、其余灰化；再点一次 = 取消高亮]
+          img class="price__img"   src=色块图，由画座位的同一个函数生成
+          span class="price__text" ￥380
+   3) 灰化 = 同一张座位图用 globalAlpha=0.2 重画：
+        Nt.Opacity = .2
+        this._ctx.globalAlpha = this._opacity && !this._select ? .2 : 1
+      所以被灰掉的座位 **RGB 不变、只有 alpha 掉到约 51**，
+      而且**仍然点得中** —— 这正是「选到其他价位座位」的成因。
+      夹具必须照这个语义复刻，否则测不出这个 bug。
+   4) 没有价位信息的座位是纯黑 rgb(0,0,0)，且不可选。
+   5) 底栏金额在 .footer-bar-info__price（￥ 在子节点 .footer-bar-info__unit）。
+      同一容器里还有 .footer-bar-info__dash-price（划线原价），
+      **故意排在前面**当陷阱：按「底栏里第一个 ￥N」读会读到原价。
+   6) 页面不认 JS 造出来的 click，只认真实鼠标事件（真代码走 CDP）。
+
+  query 参数：
+   ?nolist=1      不渲染价位列表（测「读不到价位，只能靠金额复核」）
+   ?nolist=1&notrap=1  连划线价也不要
+   ?skin=alt      价位列表整套类名换成另一套（dmv2-pricetag-*）
+   ?pkg=380       该档的文案载体换成 span.price__package、文案写「380.0元」。
+                  真站「选中态」那一档就是这么写的（类名是 price__package 而不是
+                  price__text，文案也没有「￥」前缀），只认 price__text 的解析会把它
+                  整项丢掉。
+   ?latelist=900  价位列表 900ms 后才渲染（复刻异步）
+   ?next=xxx.html 点「立即购买」后跳到哪（默认 order.html）
+   ?seatcount=2   要选几张（默认 1，仅用于夹具内部展示）
+-->
+<style>
+  body { margin: 0; font-family: sans-serif; background: #fff; }
+  .header-bar { height: 51px; background: #f7f7f7; display: flex; align-items: center;
+                padding: 0 12px; font-size: 15px; color: #333; }
+  .price-list { border-bottom: 1px solid #eee; padding: 6px 12px 10px; }
+  .price-list__item { display: flex; margin: 4px 0; overflow: auto hidden; }
+  .price { display: flex; align-items: center; margin-right: 14px;
+           padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+  .price--selected { background: #fdecef; }
+  .price--disable { opacity: .45; cursor: not-allowed; }
+  .price__img { width: 22px; height: 22px; margin-right: 4px; }
+  .price__text { font-size: 14px; color: #333; }
+  .price__package { font-size: 14px; color: #d02b48; }
+  .select-seat__container { position: relative; height: 640px; background: #fff; }
+  .aseat-layer-panel { position: absolute; left: 20px; top: 20px;
+                       width: 620px; height: 620px; }
+  .aseat-layer-panel canvas { width: 620px; height: 620px; }
+  [class*="footer-bar"] { position: fixed; left: 0; bottom: 0; width: 100%; height: 69px;
+                          background: #fff; border-top: 1px solid #eee;
+                          display: flex; align-items: center; justify-content: space-between;
+                          padding: 0 24px; box-sizing: border-box; }
+  .footer-bar-info__container { margin: 0; display: flex; align-items: baseline; gap: 8px; }
+  .footer-bar-info__price { font-size: 21px; font-weight: 700; color: #030b1a; }
+  .footer-bar-info__dash-price { color: #999; font-size: 12px; text-decoration: line-through; }
+  .footer-bar-info__count { color: #333; font-size: 12px; }
+  .footer-bar-info__message { margin: 2px 0 0; font-size: 12px; color: #999; }
+  button.bui-btn-primary { width: 171px; height: 50px; border: none; border-radius: 25px;
+                           background: #ff2d51; color: #fff; font-size: 16px; cursor: pointer; }
+  button.footer-bar__button--disable { background: #e9ebef; opacity: .5; }
+</style>
+</head>
+<body>
+  <div class="header-bar">选择座位</div>
+  <div class="price-list" id="priceList"></div>
+  <div class="select-seat">
+    <div class="select-seat__container">
+      <div class="aseat-layer-panel">
+        <canvas id="seatCanvas" width="2000" height="2000"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="footer-bar-info">
+      <p class="footer-bar-info__container">
+        <!-- 划线原价用 9999：故意取一个不可能和任何档位撞上的数。
+             否则测试里「读到 1280」既可能是读对了实付价、也可能是读错了划线价，
+             这条断言就没有判别力了。 -->
+        <span class="footer-bar-info__dash-price" id="dashPrice" style="display:none">￥9999</span>
+        <span class="footer-bar-info__price"><span class="footer-bar-info__unit">￥</span><span id="amount">0</span></span>
+        <span class="footer-bar-info__count">已选 <span id="selCount">0</span> 张</span>
+      </p>
+      <p class="footer-bar-info__message" id="hint">请选择座位</p>
+    </div>
+    <button id="buyBtn"
+            class="bui-btn bui-btn-contained bui-btn-full bui-btn-primary footer-bar__button footer-bar__button--disable">立即购买</button>
+  </div>
+<script>
+(function () {
+  var qs = new URLSearchParams(location.search);
+  var alt = qs.get('skin') === 'alt';
+  var noList = qs.get('nolist') === '1';
+  var noTrap = qs.get('notrap') === '1';
+  var lateList = parseInt(qs.get('latelist') || '0', 10);
+  var nextUrl = qs.get('next') || 'order.html';
+  // ?preselect=880  进场前就已经选中一个该价位的座位（复刻「上一轮点错了、
+  //                 取消又没成功」留下的现场：入口处必须先核金额，对不上不许确认）
+  // ?disable=880    该价位的价位项标记为「缺货/不可点」（复刻「配置那档缺货」）
+  var preselect = parseInt(qs.get('preselect') || '0', 10);
+  var disablePrice = parseInt(qs.get('disable') || '0', 10);
+  // ?pkg=380  这一档的文案载体换成 price__package（真站选中态是这么写的）
+  var pkgPrice = parseInt(qs.get('pkg') || '0', 10);
+
+  // 四个价位、四种颜色。380 用的是真站取样到的深金色 rgb(158,128,0)。
+  var TIERS = [
+    {pid: 1, price: 380,  color: [158, 128, 0]},
+    {pid: 2, price: 580,  color: [0, 122, 194]},
+    {pid: 3, price: 880,  color: [140, 82, 200]},
+    {pid: 4, price: 1280, color: [0, 150, 136]}
+  ];
+
+  var cv = document.getElementById('seatCanvas');
+  var ctx = cv.getContext('2d');
+  var W = 2000, H = 2000, R = 32;
+  var OPACITY = 0.2;          // 与线上 Nt.Opacity 一致
+
+  // 座位：每个价位一块区域，互不重叠
+  var seats = [];
+  var zones = [[0, 0], [1, 0], [0, 1], [1, 1]];   // 左上 / 右上 / 左下 / 右下
+  TIERS.forEach(function (t, ti) {
+    var zx = zones[ti][0], zy = zones[ti][1];
+    for (var r = 0; r < 4; r++) {
+      for (var c = 0; c < 4; c++) {
+        seats.push({
+          x: 220 + zx * 900 + c * 150,
+          y: 220 + zy * 900 + r * 150,
+          tier: ti, price: t.price, color: t.color,
+          row: r + 1, col: c + 1,
+          salable: true
+        });
+      }
+    }
+  });
+  // 一个「没有价位信息」的纯黑座位：不可选，也不该被选
+  seats.push({x: 1000, y: 1000, tier: -1, price: 0, color: [0, 0, 0],
+              row: 0, col: 0, salable: false});
+
+  var selectedPriceId = 0;      // 0 = 没有高亮任何价位
+  var picked = [];              // 已选座位
+
+  // ?pkg=380：把这一档设成「已高亮」，同时它的文案载体换成 price__package
+  // （真站「当前选中」那一档就是这么写的，见文件顶部注释）。
+  if (pkgPrice) {
+    for (var pj = 0; pj < TIERS.length; pj++) {
+      if (TIERS[pj].price === pkgPrice) { selectedPriceId = TIERS[pj].pid; }
+    }
+  }
+
+  window.__seats = seats;
+  window.__tiers = TIERS;
+  window.__pickedSeats = function () {
+    return picked.map(function (s) {
+      return {price: s.price, color: s.color, tier: s.tier, row: s.row, col: s.col};
+    });
+  };
+  window.__amount = function () {
+    return picked.reduce(function (a, s) { return a + s.price; }, 0);
+  };
+  window.__bought = false;
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    seats.forEach(function (s) {
+      // ★ 关键：灰化不改颜色，只改 alpha —— 和线上 globalAlpha 行为一致
+      var alpha = 1;
+      if (selectedPriceId && s.tier >= 0) {
+        var pid = TIERS[s.tier].pid;
+        alpha = (pid === selectedPriceId) ? 1 : OPACITY;
+      }
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = 'rgb(' + s.color[0] + ',' + s.color[1] + ',' + s.color[2] + ')';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // 已选中的座位加一圈红边（也只是画在 canvas 上）
+      if (picked.indexOf(s) >= 0) {
+        ctx.save();
+        ctx.strokeStyle = '#ff2d51';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, R + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    });
+  }
+
+  function refreshFooter() {
+    var n = picked.length;
+    var sum = window.__amount();
+    document.getElementById('amount').textContent = String(sum);
+    document.getElementById('selCount').textContent = String(n);
+    var btn = document.getElementById('buyBtn');
+    btn.className = n > 0
+      ? 'bui-btn bui-btn-contained bui-btn-full bui-btn-primary footer-bar__button'
+      : 'bui-btn bui-btn-contained bui-btn-full bui-btn-primary footer-bar__button footer-bar__button--disable';
+    // 划线原价只在选了座位之后出现 —— 复刻真站的呈现时机
+    if (!noTrap) {
+      document.getElementById('dashPrice').style.display = n > 0 ? '' : 'none';
+    }
+    document.getElementById('hint').textContent = n > 0 ? '已选好，可以下单了' : '请选择座位';
+  }
+
+  // 座位点击：**不看有没有高亮**，只看到底有没有这个座位、它可不可选。
+  // 线上就是这样：非高亮档位的座位虽然淡，但一样点得中 ——
+  // 这正是「会选到其他价位的座位」的根源。
+  cv.addEventListener('click', function (e) {
+    var r = cv.getBoundingClientRect();
+    var x = (e.clientX - r.left) / r.width * W;
+    var y = (e.clientY - r.top) / r.height * H;
+    for (var i = 0; i < seats.length; i++) {
+      var s = seats[i];
+      var dx = x - s.x, dy = y - s.y;
+      if (dx * dx + dy * dy > R * R) continue;
+      if (!s.salable) return;                     // 纯黑那个：点了没反应
+      var at = picked.indexOf(s);
+      if (at >= 0) { picked.splice(at, 1); }       // 再点一次 = 取消
+      else { picked.push(s); }
+      draw();
+      refreshFooter();
+      window.__lastClick = {price: s.price, tier: s.tier, row: s.row, col: s.col};
+      return;
+    }
+  });
+
+  // ---- 价位列表 ----
+  function swatchDataUrl(color) {
+    var c = document.createElement('canvas');
+    c.width = 32; c.height = 32;
+    var g = c.getContext('2d');
+    g.fillStyle = 'rgb(' + color[0] + ',' + color[1] + ',' + color[2] + ')';
+    g.fillRect(0, 0, 32, 32);
+    return c.toDataURL();
+  }
+
+  function renderPriceList() {
+    var box = document.getElementById('priceList');
+    box.innerHTML = '';
+    if (noList) { box.remove(); return; }
+    var row = document.createElement('div');
+    row.className = alt ? 'dmv2-pricetag-row' : 'price-list__item';
+    TIERS.forEach(function (t) {
+      var item = document.createElement('div');
+      item.className = alt
+        ? 'dmv2-pricetag'
+        : ('price' + (selectedPriceId === t.pid ? ' price--selected' : '')
+           + (t.price === disablePrice ? ' price--disable' : ''));
+      item.setAttribute('data-pid', String(t.pid));
+
+      var img = document.createElement('img');
+      img.className = alt ? 'dmv2-pricetag-img' : 'price__img';
+      img.src = swatchDataUrl(t.color);
+      var txt = document.createElement('span');
+      var asPackage = (t.price === pkgPrice);
+      txt.className = alt ? 'dmv2-pricetag-txt'
+                          : (asPackage ? 'price__package' : 'price__text');
+      txt.textContent = asPackage ? (t.price + '.0元') : ('￥' + t.price);
+
+      item.appendChild(img);
+      item.appendChild(txt);
+
+      item.addEventListener('click', function () {
+        selectedPriceId = (selectedPriceId === t.pid) ? 0 : t.pid;
+        // 重新渲染列表，把 price--selected 换到新的那一项上
+        renderPriceList();
+        draw();
+      });
+      row.appendChild(item);
+    });
+    box.appendChild(row);
+  }
+
+  if (lateList > 0) {
+    window.__priceListReady = false;
+    setTimeout(function () { renderPriceList(); window.__priceListReady = true; }, lateList);
+  } else {
+    renderPriceList();
+    window.__priceListReady = true;
+  }
+
+  document.getElementById('buyBtn').onclick = function () {
+    // 没选座位时按钮是灰的，按下去不往前走（复刻真站行为）
+    if (document.getElementById('amount').textContent === '0') return;
+    window.__bought = true;
+    // ?next= 复刻真实落点：真站选完座落到新版 H5 订单页（order-pay.html）
+    //
+    // 跳转前把「到底买了哪几个价位」挂到 URL 上。页面一跳，window 上的东西
+    // 全没了，测试就再也看不到「选中的是哪个价位」—— 而「有没有选错价位」
+    // 恰恰是这里唯一要验的事。order.html / order_h5.html 会忽略多余的参数。
+    var prices = picked.map(function (s) { return s.price; }).join(',');
+    var sep = nextUrl.indexOf('?') < 0 ? '?' : '&';
+    location.href = nextUrl + sep + 'picked=' + encodeURIComponent(prices);
+  };
+
+  // 进场前就已经选中一个座位（复刻「上一轮点错、取消又没成功」留下的现场）
+  if (preselect) {
+    for (var i = 0; i < seats.length; i++) {
+      if (seats[i].price === preselect && seats[i].salable) {
+        picked.push(seats[i]);
+        break;
+      }
+    }
+  }
+
+  draw();
+  refreshFooter();
+})();
+</script>
+</body>
+</html>

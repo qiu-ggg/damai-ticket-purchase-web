@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>演出详情（中文日期 + 缺货票档 + 页面默认已选）</title>
+<!--
+  假页面：详情页的「选错档」现场（2026-10-10 客户实测两单）。
+
+  复刻的是两个真实退化：
+
+   ① 场次页面上写的是「12月26日 / 12月27日」，配置里写的是 2026-12-27。
+      老代码 `'2026-12-27' in '12月27日 周日 19:30'` 永远 False —— 于是
+      「场次没选成」却继续往下走，把页面**默认选中**的 26 号买走了。
+
+   ② 票档配置要 80，页面上是「80 元 缺货」（要跳过）+「280 元」。
+      老代码 `'80' in '280 元'` 是 True —— 于是跳过缺货的 80 之后，
+      把 280 当成了「选上了 80」，成交价成了 280。
+
+  页面把「默认选中」明明白白摆出来（.picked + __picked 初值），
+  这样「脚本到底有没有改掉默认选择」一眼可辨。
+-->
+<style>
+  body { margin: 0; font-family: sans-serif; padding: 20px; }
+  .buy__button__text { display: inline-block; margin-top: 24px; padding: 12px 24px;
+                       background: #ff2d51; color: #fff; cursor: pointer; }
+  .sku-times-card .bui-dm-sku-card-item {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .sku-tickets-card .item-content {
+    display: inline-block; padding: 6px 14px; margin: 4px 8px 4px 0;
+    border: 1px solid #ccc; cursor: pointer;
+  }
+  .picked { background: #ffe8ec; border-color: #ff2d51 !important; }
+  .soldout { color: #999; }
+  h4 { margin: 18px 0 6px; font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+  <h4>场次</h4>
+  <div class="sku-times-card" id="timesList">
+    <div class="bui-dm-sku-card-item picked" data-date="2026-12-26">12月26日 周六 19:30</div>
+    <div class="bui-dm-sku-card-item" data-date="2026-12-27">12月27日 周日 19:30</div>
+  </div>
+
+  <h4>票价</h4>
+  <div class="sku-tickets-card" id="ticketsList">
+    <div class="item-content picked" data-price="280">280 元</div>
+    <div class="item-content soldout" data-price="80">80 元 缺货</div>
+  </div>
+
+  <div class="buy__button__text" id="buyBtn">选座购买</div>
+<script>
+  // 页面**默认选中**的那一份（真实详情页也是带着默认选择进场的）
+  window.__picked = {date: '2026-12-26', price: '280'};
+  window.__clickCount = {date: 0, price: 0};
+  window.__buyClicked = 0;
+
+  function bind(listId, key, attr) {
+    var box = document.getElementById(listId);
+    if (!box) return;
+    var items = box.querySelectorAll('[' + attr + ']');
+    for (var i = 0; i < items.length; i++) {
+      (function (el) {
+        el.addEventListener('click', function () {
+          window.__picked[key] = el.getAttribute(attr);
+          window.__clickCount[key] += 1;
+          for (var j = 0; j < items.length; j++) {
+            items[j].classList.remove('picked');
+          }
+          el.classList.add('picked');
+        });
+      })(items[i]);
+    }
+  }
+  bind('timesList', 'date', 'data-date');
+  bind('ticketsList', 'price', 'data-price');
+
+  document.getElementById('buyBtn').onclick = function () {
+    window.__buyClicked += 1;
+    location.href = 'seat.html';
+  };
+</script>
+</body>
+</html>

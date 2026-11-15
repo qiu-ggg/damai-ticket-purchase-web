@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>登录 - 大麦网</title>
+<style>
+  body { font-family: sans-serif; margin: 40px; }
+  .tab { display: inline-block; padding: 6px 14px; cursor: pointer; color: #666; }
+  .tab.on { color: #ff2d51; border-bottom: 2px solid #ff2d51; }
+  #pwdPane { display: none; margin-top: 18px; }
+  input { display: block; width: 260px; padding: 10px; margin: 10px 0; font-size: 16px; }
+  button { padding: 10px 26px; font-size: 16px; cursor: pointer; }
+  #captcha { display: none; margin-top: 20px; padding: 14px; background: #fff3cd; }
+</style>
+</head>
+<body>
+  <!--
+    本地假页面：复刻阿里 passport 登录页的几个关键特征，用来离线验证
+    「自动填表登录」这段逻辑，不依赖真实大麦、也不动真实账号。
+
+    复刻的要点：
+      1. 默认停在「扫码登录」，密码表单是隐藏的 —— 必须先点「密码登录」页签。
+      2. 表单 id 用 fm-login-id / fm-login-password / .fm-button.fm-submit。
+      3. 提交之后会蹦出滑块验证（真实站点的风控行为）。
+      4. ?captcha=1 时页面一进来就挂着验证，用来验证"这时不该去填表"。
+  -->
+  <h2>大麦登录</h2>
+  <div>
+    <span class="tab on" id="tabScan">扫码登录</span>
+    <span class="tab" id="tabPwd">密码登录</span>
+  </div>
+
+  <div id="scanPane">请用大麦 APP 扫描二维码登录</div>
+
+  <div id="pwdPane">
+    <form id="login-form" action="#">
+      <input id="fm-login-id" name="fm-login-id" type="text" placeholder="账号 / 手机号 / 邮箱" autocomplete="off">
+      <input id="fm-login-password" name="fm-login-password" type="password" placeholder="请输入登录密码" autocomplete="off">
+      <button type="submit" class="fm-button fm-submit">登录</button>
+    </form>
+  </div>
+
+  <div id="captcha">请完成安全验证：按住滑块，拖动到最右边</div>
+
+<script>
+  window.__submitted = false;
+  window.__filled = { id: "", pwd: "" };
+
+  document.getElementById("tabPwd").onclick = function () {
+    document.getElementById("pwdPane").style.display = "block";
+    document.getElementById("scanPane").style.display = "none";
+    this.className = "tab on";
+    document.getElementById("tabScan").className = "tab";
+  };
+  document.getElementById("tabScan").onclick = function () {
+    document.getElementById("pwdPane").style.display = "none";
+    document.getElementById("scanPane").style.display = "block";
+    this.className = "tab on";
+    document.getElementById("tabPwd").className = "tab";
+  };
+
+  document.getElementById("login-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    window.__submitted = true;
+    window.__filled = {
+      id: document.getElementById("fm-login-id").value,
+      pwd: document.getElementById("fm-login-password").value
+    };
+    // 真实站点提交后基本都会弹一次验证；这里原样复刻
+    document.getElementById("captcha").style.display = "block";
+  });
+
+  if (location.search.indexOf("captcha=1") >= 0) {
+    document.getElementById("captcha").style.display = "block";
+  }
+</script>
+</body>
+</html>
